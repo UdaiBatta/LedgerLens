@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.npm-cache/
+.env
+.env.local
+*.tsbuildinfo
+.qa/
+design-reference/investigation-concept.png
+.superdesign/
+venv/
