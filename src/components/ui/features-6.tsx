@@ -1,3 +1,4 @@
+import { Fragment } from "react"
 import { Cpu, GitBranch, LockKeyhole, ScanSearch } from "lucide-react"
 
 type FeaturesProps = {
@@ -27,6 +28,14 @@ const capabilities = [
   },
 ]
 
+const traceStages = [
+  { label: "Order", amount: "₹10,000.00", reference: "ORD-88451234", note: "Customer intent" },
+  { label: "Captured", amount: "₹10,000.00", reference: "PAY-33117890", note: "Gateway confirmed" },
+  { label: "Settlement", amount: "₹9,858.40", reference: "SET-55667788", note: "Net after fees + tax" },
+  { label: "Bank credit", amount: "₹9,855.00", reference: "TXN-11223344", note: "First break", mismatch: true },
+  { label: "Ledger", amount: "₹9,855.00", reference: "JE-9088771", note: "Posted amount" },
+] as const
+
 export function Features({ onExplore }: FeaturesProps) {
   return (
     <section className="feature-story" id="how-it-works">
@@ -39,17 +48,21 @@ export function Features({ onExplore }: FeaturesProps) {
         <div className="feature-story__fade" aria-hidden="true" />
         <div className="trace-window">
           <div className="trace-window__top"><span /><span /><span /><code>TRACE / PAY-33117890</code></div>
-          <div className="trace-flow">
-            <div><small>ORDER</small><strong>₹10,000.00</strong><code>ORD-88451234</code></div>
-            <i aria-hidden="true" />
-            <div><small>CAPTURED</small><strong>₹10,000.00</strong><code>PAY-33117890</code></div>
-            <i aria-hidden="true" />
-            <div><small>SETTLEMENT</small><strong>₹9,858.40</strong><code>SET-55667788</code></div>
-            <i className="trace-flow__alert" aria-label="Mismatch detected" />
-            <div className="trace-flow__mismatch"><small>BANK CREDIT</small><strong>₹9,855.00</strong><code>TXN-11223344</code></div>
-            <i aria-hidden="true" />
-            <div><small>LEDGER</small><strong>₹9,855.00</strong><code>JE-9088771</code></div>
+          <div className="trace-flow" role="list" aria-label="Transaction money trail">
+            {traceStages.map((stage, index) => (
+              <Fragment key={stage.reference}>
+                <div className={`trace-flow__stage ${"mismatch" in stage && stage.mismatch ? "trace-flow__mismatch" : ""}`} role="listitem">
+                  <div className="trace-flow__stage-head"><small>{String(index + 1).padStart(2, "0")}</small><span>{stage.label}</span></div>
+                  <strong>{stage.amount}</strong>
+                  <code>{stage.reference}</code>
+                  <em>{stage.note}</em>
+                </div>
+                {index < traceStages.length - 1 ? <div className={`trace-flow__connector ${index === 2 ? "trace-flow__connector--break" : ""}`} aria-hidden="true"><i /><span>{index === 2 ? "−₹3.40" : "matched"}</span></div> : null}
+              </Fragment>
+            ))}
           </div>
+          <div className="trace-window__finding"><span>FIRST BREAK</span><strong>Bank credit is ₹3.40 short.</strong><p>The settlement is verified. LedgerLens carries this exact break into the evidence trail for investigation.</p></div>
+          <div className="trace-window__legend" aria-label="Trace legend"><span><i className="trace-dot trace-dot--verified" />Verified source</span><span><i className="trace-dot trace-dot--break" />First divergence</span><span>Every amount stays cited.</span></div>
           <button onClick={onExplore}>Open evidence trail <span aria-hidden="true">→</span></button>
         </div>
       </div>
