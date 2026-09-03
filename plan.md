@@ -2,6 +2,13 @@
 
 LedgerLens is an evidence-first reconciliation platform for payment processors, banks, fintechs, and any company that must explain why a financial record does not balance. The product can use AI heavily, but money calculations and state changes remain deterministic, validated, and auditable.
 
+## Chosen backend
+
+- Django 5.2 LTS and the Django ORM.
+- SQLite for local development; PostgreSQL for production and realistic pilots.
+- Django's native views and JSON responses for the first API slice. Add Django REST Framework only when endpoint volume or serialization complexity justifies it.
+- Descriptive PascalCase class names such as `FinancialRecord`, `ReconciliationCase`, and `EvidenceConnection`; avoid shortened domain names that hide meaning.
+
 ## Product outcome
 
 Given records from an order or invoice, payment gateway, refunds, fees, tax, settlement, bank statement, and accounting ledger, LedgerLens builds one traceable transaction story. It identifies the first unexplained break, shows the evidence, and uses AI to explain likely causes and recommend a safe next step.
@@ -10,7 +17,7 @@ Given records from an order or invoice, payment gateway, refunds, fees, tax, set
 
 ### 1. Canonical financial model
 
-- Define normalized entities: `source_record`, `transaction`, `money_event`, `account`, `settlement`, `ledger_entry`, and `evidence_link`.
+- Define normalized Django models for organizations, financial data sources, financial records, reconciliation cases, and evidence connections.
 - Store all amounts as integer minor units with currency and source timestamps.
 - Preserve original payloads, source identifiers, ingestion time, and source-system metadata.
 
@@ -42,7 +49,7 @@ Given records from an order or invoice, payment gateway, refunds, fees, tax, set
 
 ### 5. Investigation API and operations UI
 
-- Expose trace, exception, evidence, source-health, and review endpoints.
+- Expose Django endpoints for traces, exceptions, evidence, source health, and reviews.
 - Add filters, assignment, notes, evidence requests, and an immutable activity log.
 - Make the landing page explain the product; make the dashboard useful for daily operations.
 
@@ -70,4 +77,3 @@ Given records from an order or invoice, payment gateway, refunds, fees, tax, set
 - The evidence graph is the product foundation; the frontend graph is only a view of it.
 - AI can explain and prioritize, but deterministic code owns balances, match decisions, permissions, and writes.
 - No real payment movement is part of the first release.
-

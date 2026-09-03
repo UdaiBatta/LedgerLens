@@ -8,4 +8,8 @@ dist/
 design-reference/investigation-concept.png
 .superdesign/
 venv/
+.venv/
+__pycache__/
+*.py[cod]
+backend/db.sqlite3
 .agents/skills/

@@ -4,12 +4,25 @@ LedgerLens is a frontend prototype for financial reconciliation and investigatio
 
 ## Run locally
 
+Frontend:
+
 ```bash
 npm install
 npm run dev
 ```
 
-Open the local URL printed by Vite. Use `npm run check` for TypeScript and ESLint validation, and `npm run build` for a production bundle.
+Backend:
+
+```bash
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r backend/requirements.txt
+cd backend
+python manage.py migrate
+python manage.py runserver
+```
+
+Open the local URL printed by Vite. The Django health endpoint is available at `http://127.0.0.1:8000/api/health/`. Use `npm run check` for TypeScript and ESLint validation, `npm run build` for a production bundle, and run `python manage.py test` from `backend/` for backend tests.
 
 ## Prototype flow
 
@@ -19,7 +32,7 @@ Open the local URL printed by Vite. Use `npm run check` for TypeScript and ESLin
 - Case investigation with deterministic checks, cited evidence, and an AI explanation
 - Responsive desktop and mobile layouts
 
-The UI uses mock data from `src/data.ts`. No external accounts, payment APIs, or AI keys are required for this prototype.
+The UI still uses mock data from `src/data.ts`. The Django backend now contains the first canonical evidence models, but the frontend is not connected to them yet. No external accounts, payment APIs, or AI keys are required for this prototype.
 
 ## Product boundary
 
@@ -27,4 +40,4 @@ The reconciliation engine—not an LLM—must calculate amounts, apply tolerance
 
 ## Stack
 
-React 19, TypeScript, Vite, Tailwind CSS v4, shadcn-compatible UI components, Lucide icons, Three.js, and the React Bits CRTWarp effect.
+React 19, TypeScript, Vite, Tailwind CSS v4, shadcn-compatible UI components, Lucide icons, Three.js, the React Bits CRTWarp effect, Django 5.2 LTS, and the Django ORM. SQLite is used locally; PostgreSQL is the production database target.
