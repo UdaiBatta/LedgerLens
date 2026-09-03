@@ -47,7 +47,8 @@ export function Features({ onExplore }: FeaturesProps) {
       <div className="feature-story__visual" aria-label="A financial event trace from order to accounting ledger">
         <div className="feature-story__fade" aria-hidden="true" />
         <div className="trace-window">
-          <div className="trace-window__top"><span /><span /><span /><code>TRACE / PAY-33117890</code></div>
+          <div className="trace-window__top"><div className="trace-window__top-dots"><span /><span /><span /></div><code>TRACE / PAY-33117890</code><div className="trace-window__top-meta"><span>5 checkpoints</span><strong><i />1 divergence</strong></div></div>
+          <div className="trace-window__summary"><div><span>Expected settlement</span><strong>₹9,858.40</strong></div><div><span>Bank credit</span><strong>₹9,855.00</strong></div><div className="trace-window__summary--variance"><span>Unexplained variance</span><strong>−₹3.40</strong></div></div>
           <div className="trace-flow" role="list" aria-label="Transaction money trail">
             {traceStages.map((stage, index) => (
               <Fragment key={stage.reference}>
@@ -55,15 +56,14 @@ export function Features({ onExplore }: FeaturesProps) {
                   <div className="trace-flow__stage-head"><small>{String(index + 1).padStart(2, "0")}</small><span>{stage.label}</span></div>
                   <strong>{stage.amount}</strong>
                   <code>{stage.reference}</code>
-                  <em>{stage.note}</em>
+                  <em><i className={"mismatch" in stage && stage.mismatch ? "trace-flow__status-dot trace-flow__status-dot--break" : "trace-flow__status-dot"} />{stage.note}</em>
                 </div>
                 {index < traceStages.length - 1 ? <div className={`trace-flow__connector ${index === 2 ? "trace-flow__connector--break" : ""}`} aria-hidden="true"><i /><span>{index === 2 ? "−₹3.40" : "matched"}</span></div> : null}
               </Fragment>
             ))}
           </div>
           <div className="trace-window__finding"><span>FIRST BREAK</span><strong>Bank credit is ₹3.40 short.</strong><p>The settlement is verified. LedgerLens carries this exact break into the evidence trail for investigation.</p></div>
-          <div className="trace-window__legend" aria-label="Trace legend"><span><i className="trace-dot trace-dot--verified" />Verified source</span><span><i className="trace-dot trace-dot--break" />First divergence</span><span>Every amount stays cited.</span></div>
-          <button onClick={onExplore}>Open evidence trail <span aria-hidden="true">→</span></button>
+          <div className="trace-window__footer"><div className="trace-window__legend" aria-label="Trace legend"><span><i className="trace-dot trace-dot--verified" />Verified source</span><span><i className="trace-dot trace-dot--break" />First divergence</span><span>Every amount stays cited.</span></div><button onClick={onExplore}>Open evidence trail <span aria-hidden="true">→</span></button></div>
         </div>
       </div>
 
