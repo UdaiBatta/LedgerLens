@@ -8,3 +8,4 @@ dist/
 design-reference/investigation-concept.png
 .superdesign/
 venv/
+.agents/skills/
