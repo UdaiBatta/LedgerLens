@@ -259,7 +259,7 @@ function AppShell({ active, children, goLanding, goDashboard, goMoneyGraph, goAu
   )
 }
 
-function Dashboard({ goLanding, openCase, goAuditLog }: { goLanding: () => void; openCase: (publicId: string) => void; goAuditLog: () => void }) {
+function Dashboard({ goLanding, openCase, goMoneyGraph, goAuditLog }: { goLanding: () => void; openCase: (publicId: string) => void; goMoneyGraph: (publicId: string) => void; goAuditLog: () => void }) {
   const [filter, setFilter] = useState("All")
   const [cases, setCases] = useState<ReconciliationCaseSummary[]>([])
   const [metrics, setMetrics] = useState<OverviewMetrics | null>(null)
@@ -283,7 +283,7 @@ function Dashboard({ goLanding, openCase, goAuditLog }: { goLanding: () => void;
   const firstCaseId = cases.find((item) => item.status !== "matched")?.public_id
 
   return (
-    <AppShell active="Overview" goLanding={goLanding} goDashboard={() => undefined} goAuditLog={goAuditLog}>
+    <AppShell active="Overview" goLanding={goLanding} goDashboard={() => undefined} goMoneyGraph={firstCaseId ? () => goMoneyGraph(firstCaseId) : undefined} goAuditLog={goAuditLog}>
       <main className="dashboard" id="main-content">
         <header className="dashboard__heading"><div><p>Reconciliation overview</p><h1>Financial truth, in one place.</h1><span>Live data from the Django reconciliation API</span></div><Button onClick={() => firstCaseId && openCase(firstCaseId)} disabled={!firstCaseId}>Review exceptions <ArrowRight data-icon="inline-end" aria-hidden="true" /></Button></header>
         {loading ? <p className="api-state" role="status">Loading reconciliation data…</p> : null}
@@ -587,7 +587,7 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: "smooth" })
   }
 
-  if (screen === "dashboard") return <Dashboard goLanding={() => navigate("landing")} openCase={(publicId) => navigate("case", publicId)} goAuditLog={() => navigate("auditLog")} />
+  if (screen === "dashboard") return <Dashboard goLanding={() => navigate("landing")} openCase={(publicId) => navigate("case", publicId)} goMoneyGraph={(publicId) => navigate("moneyGraph", publicId)} goAuditLog={() => navigate("auditLog")} />
   if (screen === "case") return <CaseDetail publicId={selectedCaseId} goLanding={() => navigate("landing")} goDashboard={() => navigate("dashboard")} goMoneyGraph={(publicId) => navigate("moneyGraph", publicId)} goAuditLog={() => navigate("auditLog")} />
   if (screen === "moneyGraph") return <MoneyGraphPage publicId={selectedCaseId} goLanding={() => navigate("landing")} goDashboard={() => navigate("dashboard")} goCase={(publicId) => navigate("case", publicId)} goAuditLog={() => navigate("auditLog")} />
   if (screen === "auditLog") return <AuditLogPage goLanding={() => navigate("landing")} goDashboard={() => navigate("dashboard")} goCase={(publicId) => navigate("case", publicId)} />
