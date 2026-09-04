@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+from django.core.exceptions import ValidationError
 from django.db import transaction
 
 from .matcher import EvidenceMatcher
@@ -35,8 +36,25 @@ class ReconciliationEngine:
         records: list[FinancialRecord],
     ) -> ReconciliationCase:
         ordered_records = sorted(records, key=lambda record: (record.occurred_at, record.id))
+        if not ordered_records:
+            raise ValidationError("At least one financial record is required.")
+        if any(record.source.organization_id != organization.id for record in ordered_records):
+            raise ValidationError("Every record must belong to the reconciliation organization.")
+        if any(record.entity_id != entity_id for record in ordered_records):
+            raise ValidationError("Every record must belong to the requested entity trace.")
+        if len({record.currency for record in ordered_records}) != 1:
+            raise ValidationError("A reconciliation trace cannot mix currencies.")
         order = self._first(ordered_records, FinancialRecordType.ORDER)
-        payment = self._first(ordered_records, FinancialRecordType.PAYMENT)
+        payments = [
+            record
+            for record in ordered_records
+            if record.record_type == FinancialRecordType.PAYMENT
+        ]
+        if len(payments) != 1:
+            raise ValidationError(
+                "Exactly one payment record is required until batched settlement rules are enabled."
+            )
+        payment = payments[0]
         fee = self._first(ordered_records, FinancialRecordType.FEE)
         tax = self._first(ordered_records, FinancialRecordType.TAX)
         settlement = self._first(ordered_records, FinancialRecordType.SETTLEMENT)

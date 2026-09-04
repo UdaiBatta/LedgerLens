@@ -4,7 +4,7 @@ Last updated: 2026-09-04
 
 ## Current phase
 
-**Following the nine-phase build plan in strict order (see "Active build plan" in `plan.md`). Phases 1–7 are complete — Phase 7 was already satisfied (import-direction test, per-scenario engine tests, and empty/error/loading states all existed before this note) rather than genuinely outstanding. Phase 8 is in progress: Money Graph and Audit Log are shipped; Connections and Rule Studio remain, next in order. Phase 9 submission prep follows.**
+**Architecture-first functional MVP.** UI expansion is paused while the real pipeline—ingest → match → reconcile → investigate—is made credible and testable.
 
 ## Shipped
 
@@ -30,32 +30,35 @@ Last updated: 2026-09-04
 - Money Graph page: renders `/api/cases/<id>/evidence-graph/` as an SVG node-edge diagram per case, reachable from the sidebar and from a case-detail link. Solid edges mark exact-reference matches; dashed edges mark sub-1.0-confidence fuzzy matches. Clicking a node opens the same evidence drawer used on case detail.
 - Audit Log page and `/api/audit-log/` endpoint: synthesizes a single chronological feed from existing `AgentRun` and `EvidenceConnection` rows across all cases — no new model or migration. Filterable by "Investigator runs" / "Evidence links"; each entry links back to its case.
 
+## Architecture milestone in this change
+
+- `IngestionBatch` persists source, content hash, processing outcome, record counts, rejected-row reasons, and completion time.
+- `POST /api/ingestion/batches/` accepts real records and can optionally trigger deterministic reconciliation from stored evidence.
+- Identical batch replays are no-ops; changed data under the same batch reference returns a conflict.
+- A later batch cannot overwrite an existing record's immutable raw evidence.
+- The matcher now follows explicit record references first and applies bounded amount/time fallback matching only to valid predecessor types. It no longer links unrelated adjacent records merely because they arrived in sequence.
+- Backend coverage is now 21 tests, including ingestion replay/conflict/rejection behavior, reconciliation preconditions, and guards against unrelated or ambiguous evidence.
+
 ## Not yet implemented
 
 - Production PostgreSQL configuration and database deployment.
-- Real source adapters, webhooks, bank statement import, and accounting exports.
 - Live source adapters, webhook endpoints, bank CSV/XLSX import, and accounting exports.
 - Full one-to-many batched-settlement and ambiguous-match resolution beyond the seeded graph.
 - Prompt version records, provider cost accounting, retry policy, and a model evaluation corpus.
 - Authentication, RBAC, encryption, retention, audit persistence, and production observability.
 - Cross-case AI Investigator, Connections, and Rule Studio pages (Money Graph and Audit Log are done; these three remain inert by design, labeled "planned").
 - A persisted case-status-change event log — Audit Log currently derives its feed from `AgentRun` and `EvidenceConnection` timestamps only, not discrete status-transition events (case.status is visible on the case page itself; adding a dedicated activity model was deferred as unnecessary for now).
-- Batched settlements (open decision D4 — many payments to one settlement) — the matcher currently only produces 1:1 sequential chains per case.
-- Import-direction test (`engine` must not import `agent`) and expanded per-scenario engine test coverage (Phase 7).
-- README, architecture diagram, demo recording, and concept-doc trim (Phase 9).
+- Batched settlements (open decision D4 — many payments to one settlement) — the matcher currently selects one valid predecessor for each destination record.
+- Demo recording and concept-doc trim (Phase 9); the README and architecture diagram already exist.
 
-## Next milestone: finish Phase 8 in order, then Phase 9
+## Next milestone: strengthen the backend architecture
 
-Working strictly in plan order — nothing below is started until everything above it is done.
-
-1. ~~Render `/api/cases/<id>/evidence-graph/` as the Money Graph page.~~ Done (Phase 8).
-2. ~~Add an Audit Log page over `AgentRun` and evidence-connection data.~~ Done (Phase 8).
-3. Add a Connections page: source systems with health status, read from `FinancialDataSource` + last `FinancialRecord.ingested_at` (Phase 8, next).
-4. Add a read-only Rule Studio page listing the engine's checks and formulas (Phase 8).
-5. Write the README, architecture diagram, and demo recording; trim the concept doc (Phase 9).
-6. Add authentication, organization scoping, request limits, and production-safe error reporting (post-submission hardening — not required for the funnel submission).
-7. Add a real adapter contract plus one bank CSV import path (post-submission).
-8. Add batched-settlement matching per open decision D4 (post-submission, unless reprioritized).
+1. Separate raw source evidence from normalized financial fields with a migration-safe `SourceRecord` → `FinancialRecord` relationship.
+2. Route the first real bank CSV adapter through the ingestion service.
+3. Support many-payments-to-one-settlement matching and reconciliation.
+4. Add organization-scoped authentication and authorization to every API queryset and write endpoint.
+5. Add persisted reconciliation-run and case-status activity events.
+6. Move realistic pilots to PostgreSQL with background ingestion, retries, rate limits, secret management, and observability.
 
 ## Definition of done for the MVP
 

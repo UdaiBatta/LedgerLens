@@ -9,6 +9,8 @@ from django.urls import reverse
 from django.utils import timezone
 
 from .agent import InvestigationAgent
+from .engine import ReconciliationEngine
+from .matcher import EvidenceMatcher
 from .models import (
     EvidenceConnection,
     EvidenceMatchMethod,
@@ -17,6 +19,7 @@ from .models import (
     FinancialRecord,
     FinancialRecordType,
     FinancialSourceType,
+    IngestionBatchStatus,
     Organization,
     ReconciliationCase,
     ReconciliationStatus,
@@ -107,6 +110,66 @@ class ReconciliationEvidenceModelTests(TestCase):
 
         with self.assertRaises(ValidationError):
             record.save()
+
+    def test_matcher_does_not_link_unrelated_records_by_sequence_alone(self) -> None:
+        settlement = self.create_financial_record(
+            self.gateway,
+            "SET-UNRELATED",
+            FinancialRecordType.SETTLEMENT,
+            100_000,
+        )
+        bank_credit = self.create_financial_record(
+            self.bank,
+            "TXN-UNRELATED",
+            FinancialRecordType.BANK_CREDIT,
+            10_000,
+        )
+        reconciliation_case = ReconciliationCase.objects.create(
+            organization=self.organization,
+            case_reference="CASE-UNRELATED",
+            currency="INR",
+            expected_amount_minor=100_000,
+            actual_amount_minor=10_000,
+        )
+
+        connections = EvidenceMatcher().build_connections(
+            reconciliation_case,
+            [settlement, bank_credit],
+        )
+
+        self.assertEqual(connections, [])
+
+    def test_matcher_prefers_an_explicit_record_reference(self) -> None:
+        settlement = self.create_financial_record(
+            self.gateway,
+            "SET-EXACT",
+            FinancialRecordType.SETTLEMENT,
+            100_000,
+        )
+        bank_credit = self.create_financial_record(
+            self.bank,
+            "TXN-EXACT",
+            FinancialRecordType.BANK_CREDIT,
+            100_000,
+        )
+        bank_credit.reference = settlement.external_record_id
+        bank_credit.save(update_fields=["reference"])
+        reconciliation_case = ReconciliationCase.objects.create(
+            organization=self.organization,
+            case_reference="CASE-EXACT",
+            currency="INR",
+            expected_amount_minor=100_000,
+            actual_amount_minor=100_000,
+        )
+
+        connection = EvidenceMatcher().build_connections(
+            reconciliation_case,
+            [settlement, bank_credit],
+        )[0]
+
+        self.assertEqual(connection.source_record, settlement)
+        self.assertEqual(connection.match_method, EvidenceMatchMethod.EXACT_REFERENCE)
+        self.assertEqual(connection.confidence, Decimal("1.0000"))
 
 
 class DemoReconciliationFlowTests(TestCase):
@@ -218,11 +281,50 @@ class DemoReconciliationFlowTests(TestCase):
         self.assertEqual(assignment_response.status_code, 200)
         self.assertEqual(assignment_response.json()["owner"], "Neha Sharma")
 
+        audit_response = self.client.get("/api/audit-log/")
+        self.assertEqual(audit_response.status_code, 200)
+        self.assertGreater(len(audit_response.json()), 0)
+
     def test_money_engine_does_not_import_the_agent_layer(self) -> None:
         engine_source = Path(__file__).with_name("engine.py").read_text(encoding="utf-8")
 
         self.assertNotIn("from .agent", engine_source)
         self.assertNotIn("import agent", engine_source)
+
+    def test_engine_refuses_ambiguous_multiple_payment_trace(self) -> None:
+        reconciliation_case = ReconciliationCase.objects.get(
+            case_reference="EXC-2025-05-000150"
+        )
+        records = list(
+            FinancialRecord.objects.filter(entity_id=reconciliation_case.entity_id)
+        )
+        payment = next(
+            record for record in records if record.record_type == FinancialRecordType.PAYMENT
+        )
+        records.append(
+            FinancialRecord.objects.create(
+                source=payment.source,
+                external_record_id="PAY-AMBIGUOUS-SECOND",
+                batch_id=payment.batch_id,
+                record_type=FinancialRecordType.PAYMENT,
+                entity_id=payment.entity_id,
+                direction=payment.direction,
+                amount_minor=payment.amount_minor,
+                currency=payment.currency,
+                occurred_at=payment.occurred_at,
+                status=payment.status,
+                content_hash="ambiguous".ljust(64, "0"),
+                raw_payload={"ambiguous_attempt": True},
+            )
+        )
+
+        with self.assertRaises(ValidationError):
+            ReconciliationEngine().reconcile(
+                reconciliation_case.organization,
+                "CASE-AMBIGUOUS",
+                reconciliation_case.entity_id,
+                records,
+            )
 
 
 class SystemHealthViewTests(TestCase):
@@ -263,3 +365,193 @@ class InvestigationAgentValidationTests(TestCase):
                 result,
                 [{"result": {"found": True, "record_id": "TXN-REAL"}}],
             )
+
+
+class FinancialRecordIngestionApiTests(TestCase):
+    def setUp(self) -> None:
+        self.payload = {
+            "organization_slug": "api-demo",
+            "organization_name": "API Demo",
+            "source_name": "Unified Test Feed",
+            "source_type": FinancialSourceType.PAYMENT_GATEWAY,
+            "batch_reference": "BATCH-001",
+            "records": [
+                self.record("ORD-API-1", FinancialRecordType.ORDER, 100_000, "10:00:00"),
+                self.record(
+                    "PAY-API-1",
+                    FinancialRecordType.PAYMENT,
+                    100_000,
+                    "10:01:00",
+                    "ORD-API-1",
+                ),
+                self.record(
+                    "FEE-API-1",
+                    FinancialRecordType.FEE,
+                    1_200,
+                    "10:02:00",
+                    "PAY-API-1",
+                ),
+                self.record(
+                    "TAX-API-1",
+                    FinancialRecordType.TAX,
+                    216,
+                    "10:03:00",
+                    "FEE-API-1",
+                ),
+                self.record(
+                    "SET-API-1",
+                    FinancialRecordType.SETTLEMENT,
+                    98_584,
+                    "10:04:00",
+                    "TAX-API-1",
+                ),
+                self.record(
+                    "TXN-API-1",
+                    FinancialRecordType.BANK_CREDIT,
+                    98_584,
+                    "10:05:00",
+                    "SET-API-1",
+                ),
+            ],
+            "reconcile": {
+                "case_reference": "CASE-API-1",
+                "entity_id": "TRACE-API-1",
+            },
+        }
+
+    @staticmethod
+    def record(external_id, record_type, amount_minor, time, reference=""):
+        return {
+            "external_record_id": external_id,
+            "record_type": record_type,
+            "entity_id": "TRACE-API-1",
+            "amount_minor": amount_minor,
+            "currency": "INR",
+            "occurred_at": f"2026-09-04T{time}+00:00",
+            "reference": reference,
+            "raw_payload": {
+                "external_record_id": external_id,
+                "reference": reference,
+                "amount_minor": amount_minor,
+            },
+        }
+
+    def test_ingestion_can_create_records_and_run_reconciliation(self) -> None:
+        response = self.client.post(
+            "/api/ingestion/batches/",
+            self.payload,
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["batch"]["status"], IngestionBatchStatus.PROCESSED)
+        self.assertEqual(response.json()["batch"]["imported_count"], 6)
+        self.assertEqual(response.json()["reconciliation_case"]["status"], "matched")
+        self.assertEqual(FinancialRecord.objects.count(), 6)
+
+    def test_replaying_the_same_batch_is_a_no_op(self) -> None:
+        first_response = self.client.post(
+            "/api/ingestion/batches/",
+            self.payload,
+            content_type="application/json",
+        )
+        second_response = self.client.post(
+            "/api/ingestion/batches/",
+            self.payload,
+            content_type="application/json",
+        )
+
+        self.assertEqual(first_response.status_code, 201)
+        self.assertEqual(second_response.status_code, 200)
+        self.assertTrue(second_response.json()["replayed"])
+        self.assertEqual(FinancialRecord.objects.count(), 6)
+
+    def test_reused_batch_reference_with_changed_data_is_rejected(self) -> None:
+        self.client.post(
+            "/api/ingestion/batches/",
+            self.payload,
+            content_type="application/json",
+        )
+        changed_payload = {**self.payload, "records": [dict(self.payload["records"][0])]}
+        changed_payload["records"][0]["amount_minor"] = 999
+
+        response = self.client.post(
+            "/api/ingestion/batches/",
+            changed_payload,
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(FinancialRecord.objects.count(), 6)
+
+    def test_invalid_rows_are_preserved_as_batch_errors(self) -> None:
+        invalid_payload = {
+            **self.payload,
+            "batch_reference": "BATCH-INVALID",
+            "records": [
+                {
+                    **self.payload["records"][0],
+                    "external_record_id": "ORD-BAD",
+                    "amount_minor": 10.5,
+                }
+            ],
+            "reconcile": None,
+        }
+
+        response = self.client.post(
+            "/api/ingestion/batches/",
+            invalid_payload,
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["batch"]["status"], IngestionBatchStatus.REJECTED)
+        self.assertEqual(response.json()["batch"]["rejected_count"], 1)
+        self.assertIn("amount_minor", response.json()["batch"]["errors"][0]["reason"])
+
+    def test_new_batch_cannot_replace_existing_immutable_evidence(self) -> None:
+        initial_payload = {**self.payload, "reconcile": None}
+        self.client.post(
+            "/api/ingestion/batches/",
+            initial_payload,
+            content_type="application/json",
+        )
+        conflicting_record = {
+            **self.payload["records"][0],
+            "amount_minor": 999,
+        }
+        conflicting_payload = {
+            **initial_payload,
+            "batch_reference": "BATCH-002",
+            "records": [conflicting_record],
+        }
+
+        response = self.client.post(
+            "/api/ingestion/batches/",
+            conflicting_payload,
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["batch"]["status"], IngestionBatchStatus.REJECTED)
+        original = FinancialRecord.objects.get(external_record_id="ORD-API-1")
+        self.assertEqual(original.raw_payload["amount_minor"], 100_000)
+        self.assertEqual(original.amount_minor, 100_000)
+
+    def test_ingestion_remains_auditable_when_reconciliation_cannot_run(self) -> None:
+        order_only_payload = {
+            **self.payload,
+            "batch_reference": "BATCH-ORDER-ONLY",
+            "records": [self.payload["records"][0]],
+        }
+
+        response = self.client.post(
+            "/api/ingestion/batches/",
+            order_only_payload,
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["batch"]["status"], IngestionBatchStatus.PROCESSED)
+        self.assertIn("reconciliation_error", response.json())
+        self.assertTrue(FinancialRecord.objects.filter(external_record_id="ORD-API-1").exists())

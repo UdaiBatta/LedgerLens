@@ -54,6 +54,13 @@ class CheckResultStatus(models.TextChoices):
     WAITING = "waiting", "Waiting"
 
 
+class IngestionBatchStatus(models.TextChoices):
+    PROCESSING = "processing", "Processing"
+    PROCESSED = "processed", "Processed"
+    PARTIAL = "partial", "Partially processed"
+    REJECTED = "rejected", "Rejected"
+
+
 class Organization(models.Model):
     name = models.CharField(max_length=200)
     slug = models.SlugField(max_length=100, unique=True)
@@ -131,6 +138,41 @@ class FinancialRecord(models.Model):
 
     def __str__(self) -> str:
         return f"{self.get_record_type_display()} · {self.external_record_id}"
+
+
+class IngestionBatch(models.Model):
+    public_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    source = models.ForeignKey(
+        FinancialDataSource,
+        on_delete=models.PROTECT,
+        related_name="ingestion_batches",
+    )
+    batch_reference = models.CharField(max_length=100)
+    content_hash = models.CharField(max_length=64)
+    status = models.CharField(
+        max_length=16,
+        choices=IngestionBatchStatus.choices,
+        default=IngestionBatchStatus.PROCESSING,
+    )
+    received_count = models.PositiveIntegerField(default=0)
+    imported_count = models.PositiveIntegerField(default=0)
+    duplicate_count = models.PositiveIntegerField(default=0)
+    rejected_count = models.PositiveIntegerField(default=0)
+    errors = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        ordering = ["-created_at", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["source", "batch_reference"],
+                name="unique_ingestion_batch_per_source",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.source.name} · {self.batch_reference}"
 
 
 class ReconciliationCase(models.Model):

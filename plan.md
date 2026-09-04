@@ -4,7 +4,16 @@ LedgerLens is an evidence-first reconciliation platform for payment processors, 
 
 ## Active build plan
 
-This is the plan currently being followed, in strict phase order — no phase's remaining items start before every earlier phase's checklist is verified against the code, not just assumed done. `status.md` is updated after every phase-relevant change and must always agree with this document.
+This plan records the original submission sequence. On 2026-09-04 the user explicitly reprioritized the project toward functional architecture, so remaining Phase 8 UI work is paused while ingestion, provenance, matching, settlement batching, and tenant safety are strengthened. `status.md` is the source of truth for current execution order.
+
+### Architecture-first priority override
+
+1. **Ingestion boundary — implemented in the current change.** Persist batch outcomes, enforce idempotency, retain row failures, and accept real records through DRF.
+2. **Evidence matching — strengthened in the current change.** Explicit references win; fuzzy links require compatible record types, currency, amount tolerance, and time window.
+3. **Raw/normalized provenance split — next.** Introduce a migration-safe `SourceRecord` → `FinancialRecord` relationship.
+4. **First real adapter.** Route bank CSV through the same ingestion service rather than creating a parallel path.
+5. **Batched settlement engine.** Support many payments and adjustments converging on one settlement.
+6. **Tenant safety.** Add authenticated organization scoping before any real pilot data.
 
 **Target:** a working end-to-end submission for the Razorpay AI Builders funnel.
 **Stack:** Django + DRF backend, existing React frontend, Anthropic SDK for the agent layer.
@@ -24,7 +33,7 @@ This is the plan currently being followed, in strict phase order — no phase's 
 | Rule Studio | Not started | Sidebar link is honestly disabled ("Planned after the investigation workflow") |
 | Connections | Not started | Sidebar link is honestly disabled |
 | Cross-case AI Investigator page | Not started | Sidebar link is honestly disabled |
-| Backend | Done for the seeded MVP | Models, matcher, engine, agent, API, and tests all exist |
+| Backend | Functional MVP | Models, ingestion batches, matcher, engine, agent, API, and tests exist; production provenance and batching remain |
 
 ### 1. Gap inventory
 
@@ -36,8 +45,6 @@ Gaps still open, tagged with severity and which phase closes them. (Closed gaps 
 | B7 | Top search bar is decorative — no results, no autocomplete | Medium | 8 |
 | B8 | Profile avatar is decorative — no dropdown, no menu | Low | 8 |
 | B9 | Dashboard money-movement strip lacks the connected-path visual the landing page promises | Medium | 8 |
-| C1 | No README framing the problem, architecture, and how to run it | Critical | 9 |
-| C2 | No architecture diagram | High | 9 |
 | C3 | No demo recording | High | 9 |
 | C4 | 15-section concept doc will read as filler to a technical reviewer | Medium | 9 |
 | D4 | Batched settlements (many payments → one settlement) not yet supported by the matcher | Medium | Post-submission unless reprioritized |
@@ -45,7 +52,7 @@ Gaps still open, tagged with severity and which phase closes them. (Closed gaps 
 ### 2. Dependency map
 
 ```
-Phase 1  ledger app          SourceRecord, NormalizedRecord                    ✅ done
+Phase 1  ledger app          Combined canonical FinancialRecord MVP            ✅ done; provenance split next
              ↓
 Phase 2  seed command        4–6 scenario chains of real records               ✅ done
              ↓
@@ -69,9 +76,9 @@ Phase 9  submission prep     README, diagram, recording, doc trim              �
 
 ### 3. Phase-by-phase plan
 
-#### Phase 1 — `ledger` app: canonical data layer — DONE
+#### Phase 1 — `ledger` app: canonical data layer — DONE FOR MVP
 
-Implemented as `Organization`, `FinancialDataSource`, `FinancialRecord`, `ReconciliationCase`, `EvidenceConnection` in `backend/reconciliation/models.py`. Immutable source records: `FinancialRecord.raw_payload` cannot be mutated after ingest (enforced in `save()`, tested). Money stored as integer minor units (`amount_minor`, paise). `unique_together` on `(source, record_type, external_record_id)` makes re-ingestion idempotent.
+Implemented as `Organization`, `FinancialDataSource`, `FinancialRecord`, `ReconciliationCase`, `EvidenceConnection`, and `IngestionBatch` in `backend/reconciliation/models.py`. `FinancialRecord.raw_payload` cannot be mutated after ingest (enforced in `save()`, tested). Money is stored as integer minor units (`amount_minor`, paise). The unique constraint on `(source, record_type, external_record_id)` makes re-ingestion idempotent. Raw source evidence and normalized fields currently share this model; separating them is the next migration-safe architecture step.
 
 **Exit condition:** met — `python manage.py migrate` succeeds; model tests pass.
 
@@ -130,8 +137,8 @@ The dashboard money-movement strip (B9) folding in the connected-path visual is 
 
 #### Phase 9 — submission prep — NOT STARTED
 
-- **README** — problem in 3–4 sentences, architecture diagram, the code-verifies/AI-explains principle, how to run (clone → migrate → seed → runserver), honest "what's stubbed vs real" section.
-- **Architecture diagram** — the layer/dependency diagram from section 2.
+- **README** — already includes the problem, architecture, run instructions, ingestion contract, and honest scope; refine for final submission.
+- **Architecture diagram** — already present in text form; render a polished image only if it improves the submission.
 - **Demo recording** — 60–90 seconds: dashboard → open the settlement-short case → click an evidence chip to show the source record → ask the agent → it says the evidence is insufficient → Money Graph. End on the insufficient-evidence moment.
 - **Trim the concept doc** — cut to a half-page in the README. Drop pitch-filler sections and the expansion roadmap.
 

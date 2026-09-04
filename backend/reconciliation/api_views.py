@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError
 from django.db.models import Count, Q, Sum
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -5,11 +6,25 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .agent import InvestigationAgent
-from .models import AgentRun, EvidenceConnection, FinancialRecord, FinancialRecordType, ReconciliationCase, ReconciliationStatus
+from .engine import ReconciliationEngine
+from .ingestion import FinancialRecordIngestionService
+from .models import (
+    AgentRun,
+    EvidenceConnection,
+    FinancialDataSource,
+    FinancialRecord,
+    FinancialRecordType,
+    FinancialSourceType,
+    IngestionBatch,
+    Organization,
+    ReconciliationCase,
+    ReconciliationStatus,
+)
 from .serializers import (
     AgentRunSerializer,
     AuditLogEntrySerializer,
     FinancialRecordSerializer,
+    IngestionBatchSerializer,
     ReconciliationCaseDetailSerializer,
     ReconciliationCaseListSerializer,
 )
@@ -191,3 +206,130 @@ class AuditLogView(APIView):
             reverse=True,
         )
         return Response(AuditLogEntrySerializer(entries, many=True).data)
+
+
+class IngestionBatchView(APIView):
+    def get(self, request):
+        batches = IngestionBatch.objects.select_related("source", "source__organization")[:100]
+        return Response(IngestionBatchSerializer(batches, many=True).data)
+
+    def post(self, request):
+        payload = request.data
+        required_fields = (
+            "organization_slug",
+            "organization_name",
+            "source_name",
+            "source_type",
+            "batch_reference",
+            "records",
+        )
+        missing_fields = [field for field in required_fields if field not in payload]
+        if missing_fields:
+            return Response(
+                {"missing_fields": missing_fields},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        empty_fields = [
+            field
+            for field in (
+                "organization_slug",
+                "organization_name",
+                "source_name",
+                "batch_reference",
+            )
+            if not str(payload[field]).strip()
+        ]
+        if empty_fields:
+            return Response(
+                {"empty_fields": empty_fields},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not isinstance(payload["records"], list) or not payload["records"]:
+            return Response(
+                {"records": "Provide at least one record."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if payload["source_type"] not in FinancialSourceType.values:
+            return Response(
+                {"source_type": "Unsupported financial source type."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        organization, _ = Organization.objects.get_or_create(
+            slug=str(payload["organization_slug"]).strip(),
+            defaults={"name": str(payload["organization_name"]).strip()},
+        )
+        source, source_created = FinancialDataSource.objects.get_or_create(
+            organization=organization,
+            name=str(payload["source_name"]).strip(),
+            defaults={"source_type": payload["source_type"]},
+        )
+        if not source_created and source.source_type != payload["source_type"]:
+            return Response(
+                {"source_type": "The existing source uses a different source type."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        try:
+            result = FinancialRecordIngestionService().ingest(
+                source=source,
+                batch_reference=str(payload["batch_reference"]).strip(),
+                records=payload["records"],
+            )
+        except ValidationError as error:
+            return Response(
+                {"errors": error.message_dict if hasattr(error, "message_dict") else error.messages},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        try:
+            reconciliation_case = self._reconcile_if_requested(organization, payload)
+        except ValidationError as error:
+            return Response(
+                {
+                    "batch": IngestionBatchSerializer(result.batch).data,
+                    "replayed": result.replayed,
+                    "reconciliation_error": (
+                        error.message_dict if hasattr(error, "message_dict") else error.messages
+                    ),
+                },
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+
+        response_data = {
+            "batch": IngestionBatchSerializer(result.batch).data,
+            "replayed": result.replayed,
+            "reconciliation_case": (
+                ReconciliationCaseDetailSerializer(reconciliation_case).data
+                if reconciliation_case
+                else None
+            ),
+        }
+        return Response(
+            response_data,
+            status=status.HTTP_200_OK if result.replayed else status.HTTP_201_CREATED,
+        )
+
+    @staticmethod
+    def _reconcile_if_requested(organization, payload):
+        reconciliation_request = payload.get("reconcile")
+        if not reconciliation_request:
+            return None
+        case_reference = str(reconciliation_request.get("case_reference", "")).strip()
+        entity_id = str(reconciliation_request.get("entity_id", "")).strip()
+        if not case_reference or not entity_id:
+            raise ValidationError(
+                {"reconcile": "case_reference and entity_id are required."}
+            )
+        records = list(
+            FinancialRecord.objects.filter(
+                source__organization=organization,
+                entity_id=entity_id,
+            )
+        )
+        return ReconciliationEngine().reconcile(
+            organization=organization,
+            case_reference=case_reference,
+            entity_id=entity_id,
+            records=records,
+        )

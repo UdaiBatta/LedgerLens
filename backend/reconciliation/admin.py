@@ -6,6 +6,7 @@ from .models import (
     EvidenceConnection,
     FinancialDataSource,
     FinancialRecord,
+    IngestionBatch,
     Organization,
     ReconciliationCase,
 )
@@ -36,6 +37,22 @@ class FinancialRecordAdmin(admin.ModelAdmin):
     )
     list_filter = ("record_type", "direction", "currency")
     search_fields = ("external_record_id", "source__name")
+
+
+@admin.register(IngestionBatch)
+class IngestionBatchAdmin(admin.ModelAdmin):
+    list_display = (
+        "batch_reference",
+        "source",
+        "status",
+        "received_count",
+        "imported_count",
+        "duplicate_count",
+        "rejected_count",
+        "created_at",
+    )
+    list_filter = ("status", "source__source_type")
+    search_fields = ("batch_reference", "source__name", "source__organization__name")
 
 
 @admin.register(ReconciliationCase)

@@ -5,6 +5,7 @@ from rest_framework.routers import DefaultRouter
 from reconciliation.api_views import (
     AuditLogView,
     FinancialRecordViewSet,
+    IngestionBatchView,
     OverviewMetricsView,
     ReconciliationCaseViewSet,
 )
@@ -20,5 +21,6 @@ urlpatterns = [
     path("api/health/", SystemHealthView.as_view(), name="system-health"),
     path("api/metrics/overview/", OverviewMetricsView.as_view(), name="overview-metrics"),
     path("api/audit-log/", AuditLogView.as_view(), name="audit-log"),
+    path("api/ingestion/batches/", IngestionBatchView.as_view(), name="ingestion-batches"),
     path("api/", include(router.urls)),
 ]

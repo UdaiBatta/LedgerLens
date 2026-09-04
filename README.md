@@ -38,6 +38,7 @@ The model is deliberately configured by environment variable so the repository d
 
 ## Working demonstration
 
+- `POST /api/ingestion/batches/` accepts real normalized financial records, records the batch result, rejects conflicting immutable evidence, and can optionally trigger reconciliation for an entity.
 - `seed_demo_cases` creates 216 records across six scenarios: clean match, unexplained ₹3.40 shortfall, fee mismatch, delayed bank credit, missing refund deduction, and idempotent duplicate delivery.
 - The deterministic engine calculates expected fees, tax, refunds, settlements, and bank differences in integer paise.
 - The matcher persists explainable graph edges with method, confidence, and rationale.
@@ -47,10 +48,40 @@ The model is deliberately configured by environment variable so the repository d
 
 No external payment account or paid AI key is required for the demo.
 
+## Ingestion contract
+
+Send one source batch at a time to `POST /api/ingestion/batches/`. A batch reference is idempotent: replaying identical data is a no-op, while reusing it for changed data returns a conflict. Invalid rows are retained in the batch's `errors` list instead of being silently discarded.
+
+```json
+{
+  "organization_slug": "acme-finops",
+  "organization_name": "Acme FinOps",
+  "source_name": "Payment Gateway",
+  "source_type": "payment_gateway",
+  "batch_reference": "gateway-2026-09-04-001",
+  "records": [{
+    "external_record_id": "PAY-1001",
+    "record_type": "payment",
+    "entity_id": "ORDER-1001",
+    "amount_minor": 100000,
+    "currency": "INR",
+    "occurred_at": "2026-09-04T10:00:00Z",
+    "reference": "ORD-1001",
+    "raw_payload": {"gateway_payment_id": "PAY-1001"}
+  }],
+  "reconcile": {
+    "case_reference": "CASE-1001",
+    "entity_id": "ORDER-1001"
+  }
+}
+```
+
+Use `GET /api/ingestion/batches/` to inspect the latest 100 batch outcomes. Reconciliation is deliberately optional: evidence ingestion remains durable even if the requested reconciliation cannot run yet because a payment or another required record is missing.
+
 ## Architecture
 
 ```text
-Source payloads
+Source payloads ──► IngestionBatch audit
      │ immutable raw evidence + idempotency key
      ▼
 FinancialRecord ──► EvidenceMatcher ──► EvidenceConnection graph
@@ -88,4 +119,4 @@ python manage.py test
 
 ## Honest scope
 
-This is a working seeded MVP, not a production banking deployment. Live Razorpay/bank/ERP adapters, authentication and role-based access, tenant-scoped API authorization, encrypted secret storage, background ingestion, PostgreSQL deployment, model-cost telemetry, and the remaining operations pages are tracked in [`status.md`](status.md).
+This is a working ingestion and reconciliation MVP, not a production banking deployment. Live Razorpay/bank/ERP adapters, authentication and role-based access, tenant-scoped API authorization, encrypted secret storage, background ingestion, PostgreSQL deployment, model-cost telemetry, and the remaining operations pages are tracked in [`status.md`](status.md).

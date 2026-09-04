@@ -1,6 +1,13 @@
 from rest_framework import serializers
 
-from .models import AgentRun, CheckResult, EvidenceConnection, FinancialRecord, ReconciliationCase
+from .models import (
+    AgentRun,
+    CheckResult,
+    EvidenceConnection,
+    FinancialRecord,
+    IngestionBatch,
+    ReconciliationCase,
+)
 
 
 class FinancialRecordSerializer(serializers.ModelSerializer):
@@ -29,6 +36,28 @@ class CheckResultSerializer(serializers.ModelSerializer):
     class Meta:
         model = CheckResult
         fields = ("check_name", "result", "evidence", "details", "ran_at")
+
+
+class IngestionBatchSerializer(serializers.ModelSerializer):
+    source_name = serializers.CharField(source="source.name", read_only=True)
+    organization_slug = serializers.CharField(source="source.organization.slug", read_only=True)
+
+    class Meta:
+        model = IngestionBatch
+        fields = (
+            "public_id",
+            "batch_reference",
+            "source_name",
+            "organization_slug",
+            "status",
+            "received_count",
+            "imported_count",
+            "duplicate_count",
+            "rejected_count",
+            "errors",
+            "created_at",
+            "completed_at",
+        )
 
 
 class EvidenceConnectionSerializer(serializers.ModelSerializer):
