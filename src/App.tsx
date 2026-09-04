@@ -639,7 +639,7 @@ function MoneyGraphPage({ publicId, goLanding, goDashboard, goExceptions, goCase
   )
 }
 
-function AuditLogPage({ goLanding, goDashboard, goExceptions, goCase }: { goLanding: () => void; goDashboard: () => void; goExceptions: () => void; goCase: (publicId: string) => void }) {
+function AuditLogPage({ goLanding, goDashboard, goExceptions, goMoneyGraph, goCase }: { goLanding: () => void; goDashboard: () => void; goExceptions: () => void; goMoneyGraph: (publicId: string) => void; goCase: (publicId: string) => void }) {
   const [entries, setEntries] = useState<AuditLogEntry[]>([])
   const [filter, setFilter] = useState<"All" | "Investigator runs" | "Evidence links">("All")
   const [loading, setLoading] = useState(true)
@@ -657,9 +657,10 @@ function AuditLogPage({ goLanding, goDashboard, goExceptions, goCase }: { goLand
     if (filter === "Evidence links") return entries.filter((entry) => entry.event_type === "evidence_connection")
     return entries
   }, [entries, filter])
+  const firstCasePublicId = entries[0]?.case_public_id
 
   return (
-    <AppShell active="Audit Log" goLanding={goLanding} goDashboard={goDashboard} goExceptions={goExceptions} goAuditLog={() => undefined}>
+    <AppShell active="Audit Log" goLanding={goLanding} goDashboard={goDashboard} goExceptions={goExceptions} goMoneyGraph={firstCasePublicId ? () => goMoneyGraph(firstCasePublicId) : undefined} goAuditLog={() => undefined}>
       <main className="audit-log-page" id="main-content">
         <header className="audit-log-page__heading">
           <div><span>Audit log</span><h1>Every AI action and evidence link, in order</h1><p>Generated directly from stored investigator runs and evidence connections — nothing here is summarized or reconstructed after the fact.</p></div>
@@ -749,7 +750,7 @@ export default function App() {
   if (screen === "dashboard") return <Dashboard goLanding={() => navigate("landing")} openCase={(publicId) => navigate("case", publicId)} goExceptions={() => navigate("exceptions")} goMoneyGraph={(publicId) => navigate("moneyGraph", publicId)} goAuditLog={() => navigate("auditLog")} />
   if (screen === "case") return <CaseDetail publicId={selectedCaseId} goLanding={() => navigate("landing")} goDashboard={() => navigate("dashboard")} goExceptions={() => navigate("exceptions")} goMoneyGraph={(publicId) => navigate("moneyGraph", publicId)} goAuditLog={() => navigate("auditLog")} />
   if (screen === "moneyGraph") return <MoneyGraphPage publicId={selectedCaseId} goLanding={() => navigate("landing")} goDashboard={() => navigate("dashboard")} goExceptions={() => navigate("exceptions")} goCase={(publicId) => navigate("case", publicId)} goAuditLog={() => navigate("auditLog")} />
-  if (screen === "auditLog") return <AuditLogPage goLanding={() => navigate("landing")} goDashboard={() => navigate("dashboard")} goExceptions={() => navigate("exceptions")} goCase={(publicId) => navigate("case", publicId)} />
+  if (screen === "auditLog") return <AuditLogPage goLanding={() => navigate("landing")} goDashboard={() => navigate("dashboard")} goExceptions={() => navigate("exceptions")} goMoneyGraph={(publicId) => navigate("moneyGraph", publicId)} goCase={(publicId) => navigate("case", publicId)} />
   if (screen === "exceptions") return <ExceptionsPage goLanding={() => navigate("landing")} goDashboard={() => navigate("dashboard")} goMoneyGraph={(publicId) => navigate("moneyGraph", publicId)} goAuditLog={() => navigate("auditLog")} openCase={(publicId) => navigate("case", publicId)} />
   return <Landing openDashboard={() => navigate("dashboard")} />
 }
