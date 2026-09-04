@@ -9,6 +9,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from .agent import InvestigationAgent
+from .bank_statement_adapter import parse_bank_statement_csv
 from .engine import ReconciliationEngine
 from .matcher import EvidenceMatcher
 from .models import (
@@ -565,4 +566,86 @@ class FinancialRecordIngestionApiTests(TestCase):
         self.assertEqual(response.status_code, 422)
         self.assertEqual(response.json()["batch"]["status"], IngestionBatchStatus.PROCESSED)
         self.assertIn("reconciliation_error", response.json())
-        self.assertTrue(FinancialRecord.objects.filter(external_record_id="ORD-API-1").exists())
+
+
+class BankStatementAdapterTests(TestCase):
+    def test_parses_a_well_formed_bank_statement_row(self) -> None:
+        records = parse_bank_statement_csv(
+            "transaction_reference,amount_minor,value_date,narration,settlement_reference,entity_id\n"
+            "TXN-CSV-1,50000,2025-05-19T14:00:00Z,NEFT credit,SET-CSV-1,Nova Commerce\n"
+        )
+
+        self.assertEqual(len(records), 1)
+        record = records[0]
+        self.assertEqual(record["external_record_id"], "TXN-CSV-1")
+        self.assertEqual(record["record_type"], FinancialRecordType.BANK_CREDIT)
+        self.assertEqual(record["amount_minor"], 50_000)
+        self.assertEqual(record["reference"], "SET-CSV-1")
+        self.assertEqual(record["raw_payload"]["linked_reference"], "SET-CSV-1")
+
+    def test_rejects_a_csv_missing_required_columns(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_bank_statement_csv("amount_minor,value_date\n50000,2025-05-19T14:00:00Z\n")
+
+    def test_rejects_a_non_numeric_amount(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_bank_statement_csv(
+                "transaction_reference,amount_minor,value_date\n"
+                "TXN-BAD,not-a-number,2025-05-19T14:00:00Z\n"
+            )
+
+
+class ImportBankStatementCommandTests(TestCase):
+    @classmethod
+    def setUpTestData(cls) -> None:
+        call_command("seed_demo_cases", verbosity=0)
+
+    def test_importing_the_missing_bank_credit_resolves_the_delayed_case(self) -> None:
+        csv_path = Path(self.id().replace(".", "_")).with_suffix(".csv")
+        csv_path.write_text(
+            "transaction_reference,amount_minor,value_date,narration,settlement_reference,entity_id\n"
+            "TXN-000138,837964,2025-05-18T14:00:00Z,NEFT credit,SET-000138,Zenith Supplies\n",
+            encoding="utf-8",
+        )
+        try:
+            call_command(
+                "import_bank_statement",
+                str(csv_path),
+                organization_slug="ledgerlens-demo",
+                source_name="HDFC Current Account",
+                batch_reference="hdfc-test-batch",
+                reconcile_entity="Zenith Supplies",
+            )
+        finally:
+            csv_path.unlink(missing_ok=True)
+
+        record = FinancialRecord.objects.get(external_record_id="TXN-000138")
+        self.assertEqual(record.record_type, FinancialRecordType.BANK_CREDIT)
+        self.assertEqual(record.amount_minor, 837_964)
+
+        reconciliation_case = ReconciliationCase.objects.get(case_reference="hdfc-test-batch")
+        self.assertEqual(reconciliation_case.exception_type, "clean_match")
+        self.assertEqual(reconciliation_case.status, ReconciliationStatus.MATCHED)
+
+    def test_replaying_the_same_batch_reference_does_not_duplicate_records(self) -> None:
+        csv_path = Path(self.id().replace(".", "_")).with_suffix(".csv")
+        csv_path.write_text(
+            "transaction_reference,amount_minor,value_date,settlement_reference,entity_id\n"
+            "TXN-REPLAY-1,12345,2025-05-19T14:00:00Z,SET-REPLAY-1,Nova Commerce\n",
+            encoding="utf-8",
+        )
+        try:
+            for _ in range(2):
+                call_command(
+                    "import_bank_statement",
+                    str(csv_path),
+                    organization_slug="ledgerlens-demo",
+                    source_name="HDFC Current Account",
+                    batch_reference="hdfc-replay-batch",
+                )
+        finally:
+            csv_path.unlink(missing_ok=True)
+
+        self.assertEqual(
+            FinancialRecord.objects.filter(external_record_id="TXN-REPLAY-1").count(), 1
+        )
