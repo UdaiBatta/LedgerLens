@@ -31,6 +31,7 @@ import {
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { SidebarNav, type NavGroupData } from "@/components/ui/dashboard-sidebar"
 import { Features } from "@/components/ui/features-6"
 import {
   Sheet,
@@ -230,25 +231,36 @@ function HeroTrace({ openDashboard }: { openDashboard: () => void }) {
 }
 
 function AppShell({ active, children, goLanding, goDashboard, goExceptions, goMoneyGraph, goAuditLog }: { active: string; children: React.ReactNode; goLanding: () => void; goDashboard: () => void; goExceptions: () => void; goMoneyGraph?: () => void; goAuditLog?: () => void }) {
-  const enabledLabels = new Set([
-    "Overview",
-    "Exceptions",
-    ...(goMoneyGraph ? ["Money Graph"] : []),
-    ...(goAuditLog ? ["Audit Log"] : []),
-  ])
   const navigationHandlers: Record<string, () => void> = {
     Overview: goDashboard,
     Exceptions: goExceptions,
     ...(goMoneyGraph ? { "Money Graph": goMoneyGraph } : {}),
     ...(goAuditLog ? { "Audit Log": goAuditLog } : {}),
   }
+  const navGroups: NavGroupData[] = [
+    {
+      items: appNav.map(([label, Icon]) => ({
+        id: label,
+        title: label,
+        icon: Icon,
+        disabled: !navigationHandlers[label],
+        disabledReason: navigationHandlers[label] ? undefined : "Planned after the investigation workflow",
+      })),
+    },
+  ]
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main-content">Skip to main content</a>
-      <aside className="app-sidebar">
+      <aside className="app-sidebar app-sidebar--rich">
         <button className="app-sidebar__brand" onClick={goLanding} aria-label="Go to LedgerLens landing page"><Brand inverse /></button>
-        <div className="workspace-switcher"><small>Workspace</small><strong>Acme FinOps</strong><span>Demo data</span></div>
-        <nav aria-label="Application navigation">{appNav.map(([label, Icon]) => { const enabled = enabledLabels.has(label); return <button key={label} className={label === active ? "active" : ""} aria-current={label === active ? "page" : undefined} aria-disabled={!enabled} title={enabled ? undefined : "Planned after the investigation workflow"} onClick={enabled ? navigationHandlers[label] : undefined}><Icon aria-hidden="true" />{label}</button> })}</nav>
+        <SidebarNav
+          className="border-none bg-transparent p-0 flex-1"
+          groups={navGroups}
+          activeId={active}
+          onSelect={(id) => navigationHandlers[id]?.()}
+          workspaceName="Acme FinOps"
+          workspacePlan="Demo data"
+        />
         <a className="repo-link" href="https://github.com/UdaiBatta/LedgerLens" target="_blank" rel="noreferrer"><Code2 aria-hidden="true" />View repository</a>
       </aside>
       <div className="app-workspace">

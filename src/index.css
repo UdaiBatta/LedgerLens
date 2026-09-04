@@ -218,20 +218,30 @@ code, .money { font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monosp
 .safety-band [data-slot="button"] { border: 1px solid #65708c; color: #f5f6f8; background: transparent; }
 
 /* App shell */
-.app-shell { display: grid; grid-template-columns: 224px minmax(0, 1fr); min-height: 100dvh; background: #f7f8fb; }
+.app-shell { display: grid; grid-template-columns: 260px minmax(0, 1fr); min-height: 100dvh; background: #f7f8fb; }
 .app-sidebar { position: sticky; top: 0; display: flex; flex-direction: column; height: 100dvh; padding: 24px 14px 16px; color: #eef0f7; background: #11172a; }
 .app-sidebar__brand, .mobile-logo { padding: 0 10px; border: 0; background: transparent; }
-.workspace-switcher { display: flex; flex-direction: column; gap: 4px; margin: 28px 6px 20px; padding: 14px; border: 1px solid #2b3450; border-radius: 9px; background: #171e33; }
-.workspace-switcher small, .workspace-switcher span { color: #97a0b8; font-size: 10px; }
-.workspace-switcher strong { font-size: 13px; }
-.app-sidebar nav { display: flex; flex-direction: column; gap: 4px; }
-.app-sidebar nav button { display: flex; align-items: center; gap: 10px; min-height: 42px; padding: 0 11px; border: 0; border-radius: 7px; color: #aeb6ce; background: transparent; text-align: left; font-size: 12px; transition: color 160ms ease, background 160ms ease; }
-.app-sidebar nav button svg { width: 16px; height: 16px; }
-.app-sidebar nav button.active { color: #fff; background: #263158; box-shadow: inset 3px 0 #7c8ef1; }
-.app-sidebar nav button[aria-disabled="true"] { cursor: default; opacity: .62; }
-.repo-link { display: flex; align-items: center; gap: 9px; min-height: 42px; margin-top: auto; padding: 0 11px; border-top: 1px solid #29314b; color: #aeb6ce; font-size: 11px; }
+.repo-link { display: flex; align-items: center; gap: 9px; min-height: 42px; margin-top: 12px; padding: 0 11px; border-top: 1px solid #29314b; color: #aeb6ce; font-size: 11px; }
 .repo-link svg { width: 16px; height: 16px; }
 .app-workspace { min-width: 0; }
+
+/* Rich sidebar (SidebarNav from components/ui/dashboard-sidebar) on the dark app-sidebar background */
+.app-sidebar--rich {
+  --card: #11172a;
+  --card-foreground: #eef0f7;
+  --foreground: #eef0f7;
+  --background: #171e33;
+  --muted-foreground: #97a0b8;
+  --border: #29314b;
+  --primary: #7c8ef1;
+  --primary-foreground: #11172a;
+}
+.app-sidebar--rich .text-foreground,
+.app-sidebar--rich .text-foreground\/90,
+.app-sidebar--rich .group-hover\:text-foreground\/70 { color: #eef0f7; }
+.app-sidebar--rich kbd { color: #97a0b8; background: #1c2338; border-color: #29314b; }
+.app-sidebar--rich [role="button"]:hover:not([aria-disabled="true"]) { background: #1c2338; }
+.app-sidebar--rich [aria-current="page"] { background: #263158 !important; box-shadow: inset 3px 0 #7c8ef1; }
 .app-topbar { display: flex; align-items: center; gap: 22px; min-height: 64px; padding: 0 28px; border-bottom: 1px solid #e2e5ec; background: rgba(255,255,255,.95); }
 .mobile-logo { display: none; }
 .search-box { display: flex; align-items: center; gap: 10px; width: min(600px, 55vw); min-height: 38px; margin: 0 auto; padding: 0 12px; border: 1px solid #dfe2e9; border-radius: 8px; background: #fbfcfd; }
