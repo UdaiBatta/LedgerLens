@@ -42,7 +42,9 @@ Last updated: 2026-09-04
 - `ReconciliationEngine` now supports batched settlements: one or more payment records per case instead of exactly one. Each payment's fee/tax is matched to that specific payment (not just "the first fee in the trace"), expected fees/taxes are summed across all payments, and per-payment checks get a disambiguating suffix when there is more than one payment. Single-payment cases are byte-identical to before (same check names, same math) — verified with the full existing test suite plus a browser check of a live single-payment case.
 - `EvidenceMatcher` now recognizes a settlement's `raw_payload["contributing_references"]` list, so a batched settlement fed by multiple payment chains gets one evidence edge per contributing chain — a real converging graph, not a chain that only captures the last contributor. Verified with an explicit edge-set assertion in `test_engine_batches_two_payments_into_one_settlement`.
 - Case-detail page: the "Transaction path" timeline now detects a batched case (more than one payment) and shows a notice pointing at the Money Graph page instead of rendering a broken linear list; ordinary single-payment cases are unchanged (verified in the browser). The underlying `pathRecords` also now deduplicates by record id instead of assuming a strict single chain.
-- Backend coverage is now 28 tests, including ingestion replay/conflict/rejection behavior, reconciliation preconditions, guards against unrelated or ambiguous evidence, the fee-variance regression, the bank-statement adapter, and the batched-settlement engine/matcher behavior.
+- Every API view now requires an `X-Organization-Slug` header and scopes its queryset to that organization: cases, records, overview metrics, audit log, and listing ingestion batches. A second organization sees an empty case list, gets a 404 on any cross-org case detail lookup, and sees zero metrics — verified with dedicated tests, not just "existing tests still pass." Ingesting still allows creating a brand-new organization on first use, but the header must match the payload's `organization_slug` or the request is rejected with 403. The frontend sends the header on every request already.
+- Fixed the "Money Graph" sidebar link showing as disabled from the dashboard even though the page works — `Dashboard` now passes a handler using the same highest-priority case it already computes for its "Review exceptions" button.
+- Backend coverage is now 30 tests, including ingestion replay/conflict/rejection behavior, reconciliation preconditions, guards against unrelated or ambiguous evidence, the fee-variance regression, the bank-statement adapter, the batched-settlement engine/matcher behavior, and organization-scoping isolation.
 
 ## Not yet implemented
 
@@ -50,8 +52,8 @@ Last updated: 2026-09-04
 - Live webhook endpoints and accounting-export adapters (bank CSV import is now real; other source types still seed-only).
 - Ambiguous-match resolution beyond the seeded graph (batched settlement matching itself is now implemented).
 - Prompt version records, provider cost accounting, retry policy, and a model evaluation corpus.
-- Authentication, RBAC, encryption, retention, audit persistence, and production observability.
-- Cross-case AI Investigator, Connections, and Rule Studio pages (Money Graph and Audit Log are done; these three remain inert by design, labeled "planned").
+- Real user login/session authentication, RBAC, encryption, retention, and production observability. (Organization-level data isolation is done; this is about individual user identity, which plan decision D5 still says isn't needed for this submission.)
+- Cross-case AI Investigator, Connections, and Rule Studio pages (Money Graph and Audit Log are done; these three remain inert by design, labeled "planned"). Next up.
 - A persisted case-status-change event log — Audit Log currently derives its feed from `AgentRun` and `EvidenceConnection` timestamps only, not discrete status-transition events (case.status is visible on the case page itself; adding a dedicated activity model was deferred as unnecessary for now).
 - No seeded demo scenario currently exercises batched settlement (all six seeded cases are single-payment); the capability is implemented and tested but not yet visible in the default demo data.
 - Demo recording and concept-doc trim (Phase 9); the README and architecture diagram already exist.
@@ -61,9 +63,10 @@ Last updated: 2026-09-04
 
 1. ~~Route the first real bank CSV adapter through the ingestion service.~~ Done.
 2. ~~Support many-payments-to-one-settlement matching and reconciliation.~~ Done.
-3. Add organization-scoped authentication and authorization to every API queryset and write endpoint.
-4. Add persisted reconciliation-run and case-status activity events.
-5. Move realistic pilots to PostgreSQL with background ingestion, retries, rate limits, secret management, and observability.
+3. ~~Add organization-scoped data isolation to every API queryset and write endpoint.~~ Done (header-based, not full user auth — see plan.md item 6).
+4. Build the remaining Phase 8 sidebar pages: Connections (source health), Rule Studio (read-only check catalog), and cross-case AI Investigator.
+5. Add persisted reconciliation-run and case-status activity events.
+6. Move realistic pilots to PostgreSQL with background ingestion, retries, rate limits, secret management, and observability.
 
 ## Definition of done for the MVP
 
