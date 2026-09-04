@@ -4,7 +4,7 @@ Last updated: 2026-09-04
 
 ## Current phase
 
-**Phases 1–6 complete for the seeded end-to-end MVP. Phase 7 hardening and Phase 8 product expansion are next.**
+**Following the nine-phase build plan in strict order (see "Active build plan" in `plan.md`). Phases 1–7 are complete — Phase 7 was already satisfied (import-direction test, per-scenario engine tests, and empty/error/loading states all existed before this note) rather than genuinely outstanding. Phase 8 is in progress: Money Graph and Audit Log are shipped; Connections and Rule Studio remain, next in order. Phase 9 submission prep follows.**
 
 ## Shipped
 
@@ -27,6 +27,8 @@ Last updated: 2026-09-04
 - No-key deterministic investigator fallback, including the explicit insufficient-evidence outcome.
 - React dashboard and case pages connected to the Django API; no hardcoded case dataset remains.
 - Clickable source-evidence drawer, persisted assignment, functional ask form, history, loading, empty, and error states.
+- Money Graph page: renders `/api/cases/<id>/evidence-graph/` as an SVG node-edge diagram per case, reachable from the sidebar and from a case-detail link. Solid edges mark exact-reference matches; dashed edges mark sub-1.0-confidence fuzzy matches. Clicking a node opens the same evidence drawer used on case detail.
+- Audit Log page and `/api/audit-log/` endpoint: synthesizes a single chronological feed from existing `AgentRun` and `EvidenceConnection` rows across all cases — no new model or migration. Filterable by "Investigator runs" / "Evidence links"; each entry links back to its case.
 
 ## Not yet implemented
 
@@ -36,15 +38,24 @@ Last updated: 2026-09-04
 - Full one-to-many batched-settlement and ambiguous-match resolution beyond the seeded graph.
 - Prompt version records, provider cost accounting, retry policy, and a model evaluation corpus.
 - Authentication, RBAC, encryption, retention, audit persistence, and production observability.
-- Money Graph, cross-case AI Investigator, Connections, Rule Studio, and Audit Log pages.
+- Cross-case AI Investigator, Connections, and Rule Studio pages (Money Graph and Audit Log are done; these three remain inert by design, labeled "planned").
+- A persisted case-status-change event log — Audit Log currently derives its feed from `AgentRun` and `EvidenceConnection` timestamps only, not discrete status-transition events (case.status is visible on the case page itself; adding a dedicated activity model was deferred as unnecessary for now).
+- Batched settlements (open decision D4 — many payments to one settlement) — the matcher currently only produces 1:1 sequential chains per case.
+- Import-direction test (`engine` must not import `agent`) and expanded per-scenario engine test coverage (Phase 7).
+- README, architecture diagram, demo recording, and concept-doc trim (Phase 9).
 
-## Next milestone: operations graph and hardening
+## Next milestone: finish Phase 8 in order, then Phase 9
 
-1. Render `/api/cases/<id>/evidence-graph/` as the Money Graph page.
-2. Add a persisted case-activity audit model and Audit Log page.
-3. Add source-connection health and read-only rule-catalog pages.
-4. Add authentication, organization scoping, request limits, and production-safe error reporting.
-5. Add a real adapter contract plus one bank CSV import path.
+Working strictly in plan order — nothing below is started until everything above it is done.
+
+1. ~~Render `/api/cases/<id>/evidence-graph/` as the Money Graph page.~~ Done (Phase 8).
+2. ~~Add an Audit Log page over `AgentRun` and evidence-connection data.~~ Done (Phase 8).
+3. Add a Connections page: source systems with health status, read from `FinancialDataSource` + last `FinancialRecord.ingested_at` (Phase 8, next).
+4. Add a read-only Rule Studio page listing the engine's checks and formulas (Phase 8).
+5. Write the README, architecture diagram, and demo recording; trim the concept doc (Phase 9).
+6. Add authentication, organization scoping, request limits, and production-safe error reporting (post-submission hardening — not required for the funnel submission).
+7. Add a real adapter contract plus one bank CSV import path (post-submission).
+8. Add batched-settlement matching per open decision D4 (post-submission, unless reprioritized).
 
 ## Definition of done for the MVP
 
