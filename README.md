@@ -1,6 +1,8 @@
 # LedgerLens
 
-LedgerLens is a frontend prototype for financial reconciliation and investigation. It connects an order, payment, fee, tax, settlement, bank credit, and ledger entry into one evidence trail, then highlights the first point where the records stop matching.
+LedgerLens is an evidence-first financial reconciliation workspace. It joins records from order systems, payment gateways, settlements, bank statements, and accounting ledgers into a traceable graph; deterministic rules locate the first break, while an optional AI investigator explains only the evidence those rules produced.
+
+The core principle is simple: **code verifies the money; AI investigates and explains it.** The AI cannot create evidence links, change source records, alter a reconciliation result, or move money.
 
 ## Run locally
 
@@ -19,20 +21,52 @@ python -m venv .venv
 pip install -r backend/requirements.txt
 cd backend
 python manage.py migrate
+python manage.py seed_demo_cases
 python manage.py runserver
 ```
 
-Open the local URL printed by Vite. The Django health endpoint is available at `http://127.0.0.1:8000/api/health/`. Use `npm run check` for TypeScript and ESLint validation, `npm run build` for a production bundle, and run `python manage.py test` from `backend/` for backend tests.
+Open `http://127.0.0.1:5173`. Vite proxies `/api` to Django at `http://127.0.0.1:8000`.
 
-## Prototype flow
+The investigator works without an API key by returning a deterministic, evidence-cited fallback. To exercise the optional Anthropic tool-use loop, set both variables before starting Django:
 
-- Landing page with the interactive CRTWarp background
-- Reconciliation overview with financial-health metrics and money movement
-- Filterable exceptions table
-- Case investigation with deterministic checks, cited evidence, and an AI explanation
-- Responsive desktop and mobile layouts
+```powershell
+$env:ANTHROPIC_API_KEY="your-key"
+$env:ANTHROPIC_MODEL="a-model-available-to-your-Anthropic-account"
+```
 
-The UI still uses mock data from `src/data.ts`. The Django backend now contains the first canonical evidence models, but the frontend is not connected to them yet. No external accounts, payment APIs, or AI keys are required for this prototype.
+The model is deliberately configured by environment variable so the repository does not assume a paid account or hard-code a model version.
+
+## Working demonstration
+
+- `seed_demo_cases` creates 216 records across six scenarios: clean match, unexplained ₹3.40 shortfall, fee mismatch, delayed bank credit, missing refund deduction, and idempotent duplicate delivery.
+- The deterministic engine calculates expected fees, tax, refunds, settlements, and bank differences in integer paise.
+- The matcher persists explainable graph edges with method, confidence, and rationale.
+- The DRF API serves real overview metrics, distinct cases, evidence graphs, assignment, record details, and investigator history.
+- The React dashboard opens each real case, renders its actual transaction path and checks, persists assignment, and opens immutable source payloads in an evidence drawer.
+- The investigator uses an auditable four-turn tool loop when configured, validates structured output and citations, and falls back safely when no paid key is available.
+
+No external payment account or paid AI key is required for the demo.
+
+## Architecture
+
+```text
+Source payloads
+     │ immutable raw evidence + idempotency key
+     ▼
+FinancialRecord ──► EvidenceMatcher ──► EvidenceConnection graph
+     │                                      │
+     └────────────► ReconciliationEngine ◄──┘
+                          │
+                          ├──► ReconciliationCase + CheckResult
+                          │           │
+                          │           ▼ read-only evidence
+                          │     InvestigationAgent ──► AgentRun audit
+                          │
+                          ▼
+                     DRF endpoints ──► React operations UI
+```
+
+All amounts use integer minor units. Raw payloads and content hashes are immutable after ingestion. Evidence edges may be created only by the rules engine or a human—there is intentionally no `ai` value in `EvidenceCreatedBy`.
 
 ## Product boundary
 
@@ -40,4 +74,18 @@ The reconciliation engine—not an LLM—must calculate amounts, apply tolerance
 
 ## Stack
 
-React 19, TypeScript, Vite, Tailwind CSS v4, shadcn-compatible UI components, Lucide icons, Three.js, the React Bits CRTWarp effect, Django 5.2 LTS, and the Django ORM. SQLite is used locally; PostgreSQL is the production database target.
+React 19, TypeScript, Vite, Tailwind CSS v4, shadcn-compatible Base UI components, Lucide icons, Three.js, React Bits CRTWarp, Django 5.2 LTS, Django REST Framework, and the optional Anthropic SDK. SQLite is used locally; PostgreSQL is the production target.
+
+## Verification
+
+```bash
+npm run check
+npm run build
+cd backend
+python manage.py makemigrations --check --dry-run
+python manage.py test
+```
+
+## Honest scope
+
+This is a working seeded MVP, not a production banking deployment. Live Razorpay/bank/ERP adapters, authentication and role-based access, tenant-scoped API authorization, encrypted secret storage, background ingestion, PostgreSQL deployment, model-cost telemetry, and the remaining operations pages are tracked in [`status.md`](status.md).

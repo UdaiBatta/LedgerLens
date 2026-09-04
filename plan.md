@@ -6,7 +6,7 @@ LedgerLens is an evidence-first reconciliation platform for payment processors, 
 
 - Django 5.2 LTS and the Django ORM.
 - SQLite for local development; PostgreSQL for production and realistic pilots.
-- Django's native views and JSON responses for the first API slice. Add Django REST Framework only when endpoint volume or serialization complexity justifies it.
+- Django REST Framework for case, record, evidence-graph, assignment, investigator, and overview endpoints.
 - Descriptive PascalCase class names such as `FinancialRecord`, `ReconciliationCase`, and `EvidenceConnection`; avoid shortened domain names that hide meaning.
 
 ## Product outcome
@@ -15,7 +15,7 @@ Given records from an order or invoice, payment gateway, refunds, fees, tax, set
 
 ## Implementation sequence
 
-### 1. Canonical financial model
+### 1. Canonical financial model — implemented for the seeded MVP
 
 - Define normalized Django models for organizations, financial data sources, financial records, reconciliation cases, and evidence connections.
 - Store all amounts as integer minor units with currency and source timestamps.
@@ -31,7 +31,7 @@ Given records from an order or invoice, payment gateway, refunds, fees, tax, set
 
 **Exit condition:** a replayed webhook or imported statement cannot duplicate money events.
 
-### 3. Evidence graph
+### 3. Evidence graph — implemented for seeded cases
 
 - Link records into a directed graph: order → payment → fee/refund → settlement → bank credit → ledger entry.
 - Keep every edge explainable with the matching key, timestamp window, amount tolerance, and confidence.
@@ -39,7 +39,7 @@ Given records from an order or invoice, payment gateway, refunds, fees, tax, set
 
 **Exit condition:** an investigator can open any transaction and see the complete, auditable path plus missing links.
 
-### 4. Deterministic reconciliation engine
+### 4. Deterministic reconciliation engine — implemented for six scenarios
 
 - Match by exact references first, then constrained fallbacks such as amount, currency, account, date window, and narration.
 - Calculate expected amounts, fees, tax, refunds, settlement deductions, and tolerances in code—not in an LLM.
@@ -47,7 +47,7 @@ Given records from an order or invoice, payment gateway, refunds, fees, tax, set
 
 **Exit condition:** historical fixtures produce repeatable results and every mismatch has a machine-readable reason.
 
-### 5. Investigation API and operations UI
+### 5. Investigation API and operations UI — core workflow implemented
 
 - Expose Django endpoints for traces, exceptions, evidence, source health, and reviews.
 - Add filters, assignment, notes, evidence requests, and an immutable activity log.
@@ -55,7 +55,7 @@ Given records from an order or invoice, payment gateway, refunds, fees, tax, set
 
 **Exit condition:** an operator can go from an exception list to a cited resolution without spreadsheets.
 
-### 6. AI investigation layer
+### 6. AI investigation layer — auditable tool loop implemented
 
 - Send only the normalized result, relevant evidence, and allowed metadata to a model through a provider adapter.
 - Require structured JSON: finding, confidence, cited record IDs, missing evidence, and recommended next action.
@@ -64,7 +64,7 @@ Given records from an order or invoice, payment gateway, refunds, fees, tax, set
 
 **Exit condition:** every AI statement is traceable to deterministic checks and source records.
 
-### 7. Production hardening
+### 7. Production hardening — not started
 
 - Add tenant isolation, encryption, secret management, retention policies, rate limits, and role-based access.
 - Add replayable fixtures, contract tests for adapters, reconciliation golden tests, and model evaluation cases.

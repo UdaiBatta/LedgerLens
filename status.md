@@ -4,7 +4,7 @@ Last updated: 2026-09-04
 
 ## Current phase
 
-**Phase 1 — Django canonical data-model foundation in progress.**
+**Phases 1–6 complete for the seeded end-to-end MVP. Phase 7 hardening and Phase 8 product expansion are next.**
 
 ## Shipped
 
@@ -19,23 +19,32 @@ Last updated: 2026-09-04
 - Django backend scaffold with a health endpoint and admin registration.
 - Canonical `Organization`, `FinancialDataSource`, `FinancialRecord`, `ReconciliationCase`, and `EvidenceConnection` models.
 - Backend model and health-endpoint tests plus frontend/backend GitHub Actions checks.
+- Idempotent `seed_demo_cases` command with six distinct scenarios and 216 records.
+- Deterministic fee, tax, refund, settlement, bank-credit, and missing-evidence checks using integer paise.
+- Persisted evidence connections with matching method, confidence, rationale, and non-AI authorship.
+- DRF endpoints for cases, records, evidence graphs, assignment, investigator runs, and overview metrics.
+- Optional Anthropic four-turn tool loop with structured-output and citation validation.
+- No-key deterministic investigator fallback, including the explicit insufficient-evidence outcome.
+- React dashboard and case pages connected to the Django API; no hardcoded case dataset remains.
+- Clickable source-evidence drawer, persisted assignment, functional ask form, history, loading, empty, and error states.
 
 ## Not yet implemented
 
 - Production PostgreSQL configuration and database deployment.
 - Real source adapters, webhooks, bank statement import, and accounting exports.
-- Canonical money-event schema and evidence graph backend.
-- Deterministic reconciliation service for partial refunds, fees, tax, batching, and tolerances.
-- Real AI provider integration, structured output validation, prompt/version tracking, and cost controls.
+- Live source adapters, webhook endpoints, bank CSV/XLSX import, and accounting exports.
+- Full one-to-many batched-settlement and ambiguous-match resolution beyond the seeded graph.
+- Prompt version records, provider cost accounting, retry policy, and a model evaluation corpus.
 - Authentication, RBAC, encryption, retention, audit persistence, and production observability.
+- Money Graph, cross-case AI Investigator, Connections, Rule Studio, and Audit Log pages.
 
-## Next milestone: canonical model spike
+## Next milestone: operations graph and hardening
 
-1. Generate and review the first Django migration.
-2. Convert the existing mock data into Django records and evidence connections.
-3. Implement one deterministic trace builder and the `₹3.40` bank-shortfall fixture.
-4. Add JSON endpoints for the dashboard and case investigation views.
-5. Connect the React prototype to those endpoints.
+1. Render `/api/cases/<id>/evidence-graph/` as the Money Graph page.
+2. Add a persisted case-activity audit model and Audit Log page.
+3. Add source-connection health and read-only rule-catalog pages.
+4. Add authentication, organization scoping, request limits, and production-safe error reporting.
+5. Add a real adapter contract plus one bank CSV import path.
 
 ## Definition of done for the MVP
 

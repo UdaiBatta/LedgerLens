@@ -1,6 +1,8 @@
 from django.contrib import admin
 
 from .models import (
+    AgentRun,
+    CheckResult,
     EvidenceConnection,
     FinancialDataSource,
     FinancialRecord,
@@ -61,3 +63,21 @@ class EvidenceConnectionAdmin(admin.ModelAdmin):
         "is_verified",
     )
     list_filter = ("match_method", "is_verified")
+
+
+@admin.register(CheckResult)
+class CheckResultAdmin(admin.ModelAdmin):
+    list_display = ("reconciliation_case", "check_name", "result", "ran_at")
+    list_filter = ("result",)
+
+
+@admin.register(AgentRun)
+class AgentRunAdmin(admin.ModelAdmin):
+    list_display = (
+        "reconciliation_case",
+        "confidence",
+        "sufficient_evidence",
+        "model_version",
+        "created_at",
+    )
+    list_filter = ("sufficient_evidence", "model_version")

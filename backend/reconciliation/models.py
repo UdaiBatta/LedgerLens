@@ -43,6 +43,17 @@ class EvidenceMatchMethod(models.TextChoices):
     MANUAL_REVIEW = "manual_review", "Manual review"
 
 
+class EvidenceCreatedBy(models.TextChoices):
+    RULES_ENGINE = "rules_engine", "Rules engine"
+    HUMAN = "human", "Human"
+
+
+class CheckResultStatus(models.TextChoices):
+    PASSED = "passed", "Passed"
+    FAILED = "failed", "Failed"
+    WAITING = "waiting", "Waiting"
+
+
 class Organization(models.Model):
     name = models.CharField(max_length=200)
     slug = models.SlugField(max_length=100, unique=True)
@@ -82,11 +93,17 @@ class FinancialRecord(models.Model):
         related_name="financial_records",
     )
     external_record_id = models.CharField(max_length=200)
+    batch_id = models.CharField(max_length=100, blank=True)
     record_type = models.CharField(max_length=32, choices=FinancialRecordType.choices)
+    entity_id = models.CharField(max_length=200, default="")
     direction = models.CharField(max_length=8, choices=FinancialDirection.choices)
     amount_minor = models.PositiveBigIntegerField()
+    fee_minor = models.PositiveBigIntegerField(default=0)
+    tax_minor = models.PositiveBigIntegerField(default=0)
     currency = models.CharField(max_length=3)
     occurred_at = models.DateTimeField()
+    status = models.CharField(max_length=40, blank=True)
+    reference = models.CharField(max_length=200, blank=True)
     content_hash = models.CharField(max_length=64)
     raw_payload = models.JSONField(default=dict)
     ingested_at = models.DateTimeField(auto_now_add=True)
@@ -95,8 +112,8 @@ class FinancialRecord(models.Model):
         ordering = ["occurred_at", "id"]
         constraints = [
             models.UniqueConstraint(
-                fields=["source", "external_record_id", "content_hash"],
-                name="unique_financial_record_version",
+                fields=["source", "record_type", "external_record_id"],
+                name="unique_financial_source_record",
             )
         ]
 
@@ -104,6 +121,13 @@ class FinancialRecord(models.Model):
         self.currency = self.currency.upper()
         if len(self.currency) != 3 or not self.currency.isalpha():
             raise ValidationError({"currency": "Use a three-letter currency code."})
+
+    def save(self, *args, **kwargs) -> None:
+        if self.pk:
+            original = FinancialRecord.objects.only("raw_payload", "content_hash").get(pk=self.pk)
+            if original.raw_payload != self.raw_payload or original.content_hash != self.content_hash:
+                raise ValidationError("Raw source evidence is immutable after ingestion.")
+        super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         return f"{self.get_record_type_display()} · {self.external_record_id}"
@@ -117,6 +141,8 @@ class ReconciliationCase(models.Model):
         related_name="reconciliation_cases",
     )
     case_reference = models.CharField(max_length=100)
+    entity_id = models.CharField(max_length=200, default="")
+    exception_type = models.CharField(max_length=100, default="")
     status = models.CharField(
         max_length=32,
         choices=ReconciliationStatus.choices,
@@ -132,8 +158,10 @@ class ReconciliationCase(models.Model):
         blank=True,
         null=True,
     )
+    owner = models.CharField(max_length=200, blank=True)
     opened_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    resolved_at = models.DateTimeField(blank=True, null=True)
 
     class Meta:
         constraints = [
@@ -180,9 +208,16 @@ class EvidenceConnection(models.Model):
         related_name="incoming_evidence_connections",
     )
     sequence_number = models.PositiveSmallIntegerField()
+    link_type = models.CharField(max_length=50, default="transaction_flow")
     match_method = models.CharField(max_length=32, choices=EvidenceMatchMethod.choices)
     confidence = models.DecimalField(max_digits=5, decimal_places=4)
     matching_reason = models.CharField(max_length=500)
+    rationale = models.JSONField(default=dict)
+    created_by = models.CharField(
+        max_length=20,
+        choices=EvidenceCreatedBy.choices,
+        default=EvidenceCreatedBy.RULES_ENGINE,
+    )
     is_verified = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -220,3 +255,51 @@ class EvidenceConnection(models.Model):
             f"{self.source_record.external_record_id} → "
             f"{self.destination_record.external_record_id}"
         )
+
+
+class CheckResult(models.Model):
+    reconciliation_case = models.ForeignKey(
+        ReconciliationCase,
+        on_delete=models.CASCADE,
+        related_name="check_results",
+    )
+    check_name = models.CharField(max_length=120)
+    result = models.CharField(max_length=12, choices=CheckResultStatus.choices)
+    evidence = models.JSONField(default=list)
+    details = models.CharField(max_length=500, blank=True)
+    ran_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["reconciliation_case", "check_name"],
+                name="unique_check_name_per_case",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.reconciliation_case.case_reference} · {self.check_name}"
+
+
+class AgentRun(models.Model):
+    reconciliation_case = models.ForeignKey(
+        ReconciliationCase,
+        on_delete=models.CASCADE,
+        related_name="agent_runs",
+    )
+    question = models.TextField()
+    tool_calls = models.JSONField(default=list)
+    conclusion = models.TextField()
+    recommended_action = models.TextField(blank=True)
+    confidence = models.DecimalField(max_digits=5, decimal_places=4)
+    evidence_cited = models.JSONField(default=list)
+    sufficient_evidence = models.BooleanField()
+    model_version = models.CharField(max_length=100)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+
+    def __str__(self) -> str:
+        return f"{self.reconciliation_case.case_reference} · {self.created_at:%Y-%m-%d %H:%M}"
