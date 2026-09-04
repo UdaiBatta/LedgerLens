@@ -319,6 +319,7 @@ const TRAIL_CHECKPOINT_LABELS: Record<string, string> = {
 function EvidenceTrail({ publicId, casesLoading, openCase, openGraph }: { publicId?: string; casesLoading: boolean; openCase: () => void; openGraph: () => void }) {
   const [reconciliationCase, setReconciliationCase] = useState<ReconciliationCaseDetail | null>(null)
   const [error, setError] = useState("")
+  const [selectedRecord, setSelectedRecord] = useState<FinancialRecord | null>(null)
 
   useEffect(() => {
     if (!publicId) return
@@ -368,7 +369,7 @@ function EvidenceTrail({ publicId, casesLoading, openCase, openGraph }: { public
             return (
               <li key={record.id}>
                 {previous ? <span className={`trace-link ${linkIsBreak ? "trace-link--broken" : ""}`} aria-hidden="true"><b>{linkIsBreak ? `${difference < 0 ? "−" : "+"}${formatMoney(Math.abs(difference), currency)}` : "MATCHED"}</b></span> : null}
-                <button className={`trace-card ${isBreak ? "trace-card--break" : ""}`} onClick={openCase}>
+                <button className={`trace-card ${isBreak ? "trace-card--break" : ""}`} onClick={() => setSelectedRecord(record)}>
                   <header><small>{String(index + 1).padStart(2, "0")}</small><span>{readableLabel(record.record_type)}</span></header>
                   <strong>{formatMoney(record.amount_minor, record.currency)}</strong>
                   <code>{record.external_record_id}</code>
@@ -393,6 +394,12 @@ function EvidenceTrail({ publicId, casesLoading, openCase, openGraph }: { public
           <button onClick={openGraph}>Open evidence trail <ArrowRight aria-hidden="true" /></button>
         </footer>
       </> : null}
+      <Sheet open={Boolean(selectedRecord)} onOpenChange={(open) => { if (!open) setSelectedRecord(null) }}>
+        <SheetContent className="evidence-sheet">
+          <SheetHeader><SheetTitle>Source evidence</SheetTitle><SheetDescription>Immutable record received from {selectedRecord?.source_name}.</SheetDescription></SheetHeader>
+          {selectedRecord ? <div className="evidence-sheet__body"><dl><div><dt>Reference</dt><dd>{selectedRecord.external_record_id}</dd></div><div><dt>Type</dt><dd>{readableLabel(selectedRecord.record_type)}</dd></div><div><dt>Amount</dt><dd>{formatMoney(selectedRecord.amount_minor, selectedRecord.currency)}</dd></div><div><dt>Occurred</dt><dd>{new Date(selectedRecord.occurred_at).toLocaleString("en-IN")}</dd></div></dl><h3>Raw source payload</h3><pre>{JSON.stringify(selectedRecord.raw_payload, null, 2)}</pre><button className="evidence-sheet__case-link" onClick={openCase}>Open full case <ArrowRight aria-hidden="true" /></button></div> : null}
+        </SheetContent>
+      </Sheet>
     </article>
   )
 }
