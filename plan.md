@@ -8,12 +8,16 @@ This plan records the original submission sequence. On 2026-09-04 the user expli
 
 ### Architecture-first priority override
 
-1. **Ingestion boundary — implemented in the current change.** Persist batch outcomes, enforce idempotency, retain row failures, and accept real records through DRF.
-2. **Evidence matching — strengthened in the current change.** Explicit references win; fuzzy links require compatible record types, currency, amount tolerance, and time window.
-3. **Raw/normalized provenance split — next.** Introduce a migration-safe `SourceRecord` → `FinancialRecord` relationship.
-4. **First real adapter.** Route bank CSV through the same ingestion service rather than creating a parallel path.
-5. **Batched settlement engine.** Support many payments and adjustments converging on one settlement.
+1. **Ingestion boundary — done.** Persist batch outcomes, enforce idempotency, retain row failures, and accept real records through DRF.
+2. **Evidence matching — done.** Explicit references win; fuzzy links require compatible record types, currency, amount tolerance, and time window.
+3. **Raw/normalized provenance split — deliberately skipped.** `FinancialRecord` already stores immutable `raw_payload`/`content_hash` provenance alongside normalized fields on one row, with mutation blocked at the model layer (`save()` raises `ValidationError` if raw evidence changes) and covered by tests. Splitting into a separate `SourceRecord` table would touch every FK, serializer, and query in the app for no functional gain over what already exists — decided against per the "don't explode the codebase" instruction (2026-09-04).
+4. **First real adapter — done.** `python manage.py import_bank_statement <csv> --organization-slug=... --source-name=... --batch-reference=... [--reconcile-entity=...]` parses a bank statement CSV (`bank_statement_adapter.py`) into the same record-dict shape `FinancialRecordIngestionService` already accepts, so it reuses the tested ingestion path rather than creating a parallel one. Replay-safe, partial-batch-safe (bad rows rejected with reasons, good rows still import), and can optionally trigger reconciliation immediately after import.
+5. **Batched settlement engine.** Support many payments and adjustments converging on one settlement. Next in order.
 6. **Tenant safety.** Add authenticated organization scoping before any real pilot data.
+
+### UI-consistency fix landed alongside item 4
+
+`ReconciliationCase.expected_amount_minor`/`actual_amount_minor` were always set to the settlement-level totals regardless of which check actually broke first. This made the Exceptions table show a misleading ₹0.00 variance for `fee_mismatch` and `tax_mismatch` cases even though they were flagged "Needs review" — a real inconsistency, not a display bug, confirmed via the API before fixing. `ReconciliationEngine._classify` now returns the specific expected/actual pair for whichever check broke first, so the case heading, Exceptions table, and the check-results table all agree. Covered by a new regression test (`test_fee_mismatch_case_reports_the_fee_variance_not_the_settlement_variance`).
 
 **Target:** a working end-to-end submission for the Razorpay AI Builders funnel.
 **Stack:** Django + DRF backend, existing React frontend, Anthropic SDK for the agent layer.
