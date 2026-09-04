@@ -49,6 +49,14 @@ class EvidenceMatcher:
             if source_record:
                 matched_pairs.append((source_record, destination_record))
 
+        # A settlement can be fed by more than one payment chain (batched settlement),
+        # so every prior record that explicitly names the settlement also links to it,
+        # not only the single closest predecessor found above.
+        matched_pairs += self._additional_explicit_references_into_settlements(
+            ordered_records,
+            matched_pairs,
+        )
+
         for sequence_number, (source_record, destination_record) in enumerate(
             matched_pairs,
             start=1,
@@ -69,6 +77,25 @@ class EvidenceMatcher:
             )
 
         return connections
+
+    def _additional_explicit_references_into_settlements(self, ordered_records, matched_pairs):
+        """A batched settlement can list more than one contributing record's external id in
+        raw_payload["contributing_references"], since FinancialRecord.reference only holds one
+        value and the primary chain link already uses it for the closest predecessor."""
+        already_linked = {(source.id, destination.id) for source, destination in matched_pairs}
+        records_by_external_id = {record.external_record_id: record for record in ordered_records}
+        settlements = [
+            record for record in ordered_records if record.record_type == "settlement"
+        ]
+        extra_pairs = []
+        for settlement in settlements:
+            contributing_references = settlement.raw_payload.get("contributing_references", [])
+            for external_id in contributing_references:
+                contributor = records_by_external_id.get(external_id)
+                if contributor and (contributor.id, settlement.id) not in already_linked:
+                    extra_pairs.append((contributor, settlement))
+                    already_linked.add((contributor.id, settlement.id))
+        return extra_pairs
 
     def _closest_allowed_predecessor(self, candidates, destination_record):
         allowed_types = self.predecessor_types.get(destination_record.record_type, set())
@@ -109,6 +136,18 @@ class EvidenceMatcher:
                 {
                     "summary": "The destination record contains the source record identifier.",
                     "matched_fields": ["linked_reference"],
+                    "tolerance_minor": 0,
+                },
+            )
+
+        contributing_references = destination_record.raw_payload.get("contributing_references", [])
+        if source_record.external_record_id in contributing_references:
+            return (
+                EvidenceMatchMethod.EXACT_REFERENCE,
+                Decimal("1.0000"),
+                {
+                    "summary": "The settlement explicitly lists the source record as a contributor.",
+                    "matched_fields": ["contributing_references"],
                     "tolerance_minor": 0,
                 },
             )

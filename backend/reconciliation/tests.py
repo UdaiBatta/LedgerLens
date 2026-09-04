@@ -1,4 +1,5 @@
 import json
+from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -303,40 +304,99 @@ class DemoReconciliationFlowTests(TestCase):
         self.assertNotIn("from .agent", engine_source)
         self.assertNotIn("import agent", engine_source)
 
-    def test_engine_refuses_ambiguous_multiple_payment_trace(self) -> None:
+    def test_engine_requires_at_least_one_payment(self) -> None:
         reconciliation_case = ReconciliationCase.objects.get(
             case_reference="EXC-2025-05-000150"
         )
-        records = list(
-            FinancialRecord.objects.filter(entity_id=reconciliation_case.entity_id)
-        )
-        payment = next(
-            record for record in records if record.record_type == FinancialRecordType.PAYMENT
-        )
-        records.append(
-            FinancialRecord.objects.create(
-                source=payment.source,
-                external_record_id="PAY-AMBIGUOUS-SECOND",
-                batch_id=payment.batch_id,
-                record_type=FinancialRecordType.PAYMENT,
-                entity_id=payment.entity_id,
-                direction=payment.direction,
-                amount_minor=payment.amount_minor,
-                currency=payment.currency,
-                occurred_at=payment.occurred_at,
-                status=payment.status,
-                content_hash="ambiguous".ljust(64, "0"),
-                raw_payload={"ambiguous_attempt": True},
-            )
-        )
+        records = [
+            record
+            for record in FinancialRecord.objects.filter(entity_id=reconciliation_case.entity_id)
+            if record.record_type != FinancialRecordType.PAYMENT
+        ]
 
         with self.assertRaises(ValidationError):
             ReconciliationEngine().reconcile(
                 reconciliation_case.organization,
-                "CASE-AMBIGUOUS",
+                "CASE-NO-PAYMENT",
                 reconciliation_case.entity_id,
                 records,
             )
+
+    def test_engine_batches_two_payments_into_one_settlement(self) -> None:
+        reconciliation_case = ReconciliationCase.objects.get(
+            case_reference="EXC-2025-05-000150"
+        )
+        source = FinancialRecord.objects.filter(
+            entity_id=reconciliation_case.entity_id, record_type=FinancialRecordType.PAYMENT
+        ).first().source
+        started_at = timezone.now()
+
+        def make(external_id, record_type, amount_minor, minute, reference="", extra_payload=None):
+            return FinancialRecord.objects.create(
+                source=source,
+                external_record_id=external_id,
+                record_type=record_type,
+                entity_id="Batched Settlement Entity",
+                direction=FinancialDirection.CREDIT,
+                amount_minor=amount_minor,
+                currency="INR",
+                occurred_at=started_at + timedelta(minutes=minute),
+                reference=reference,
+                content_hash=external_id.lower().ljust(64, "0"),
+                raw_payload={"linked_reference": reference, **(extra_payload or {})},
+            )
+
+        payment_1 = make("PAY-BATCH-1", FinancialRecordType.PAYMENT, 100_000, 1)
+        fee_1 = make("FEE-BATCH-1", FinancialRecordType.FEE, 1_200, 2, reference=payment_1.external_record_id)
+        tax_1 = make("TAX-BATCH-1", FinancialRecordType.TAX, 216, 3, reference=fee_1.external_record_id)
+
+        payment_2 = make("PAY-BATCH-2", FinancialRecordType.PAYMENT, 200_000, 4)
+        fee_2 = make("FEE-BATCH-2", FinancialRecordType.FEE, 2_400, 5, reference=payment_2.external_record_id)
+        tax_2 = make("TAX-BATCH-2", FinancialRecordType.TAX, 432, 6, reference=fee_2.external_record_id)
+
+        combined_settlement_amount = (100_000 - 1_200 - 216) + (200_000 - 2_400 - 432)
+        combined_settlement = make(
+            "SET-BATCH-COMBINED",
+            FinancialRecordType.SETTLEMENT,
+            combined_settlement_amount,
+            7,
+            extra_payload={
+                "contributing_references": [tax_1.external_record_id, tax_2.external_record_id],
+            },
+        )
+
+        records = [payment_1, fee_1, tax_1, payment_2, fee_2, tax_2, combined_settlement]
+        batched_case = ReconciliationEngine().reconcile(
+            reconciliation_case.organization,
+            "CASE-BATCHED",
+            "Batched Settlement Entity",
+            records,
+        )
+
+        self.assertEqual(batched_case.exception_type, "bank_credit_delayed")
+        self.assertEqual(batched_case.expected_amount_minor, combined_settlement_amount)
+        self.assertEqual(
+            batched_case.check_results.filter(
+                check_name__startswith="Processing fee calculation ("
+            ).count(),
+            2,
+        )
+
+        connections = {
+            (connection.source_record.external_record_id, connection.destination_record.external_record_id)
+            for connection in batched_case.evidence_connections.all()
+        }
+        self.assertEqual(
+            connections,
+            {
+                ("PAY-BATCH-1", "FEE-BATCH-1"),
+                ("FEE-BATCH-1", "TAX-BATCH-1"),
+                ("PAY-BATCH-2", "FEE-BATCH-2"),
+                ("FEE-BATCH-2", "TAX-BATCH-2"),
+                ("TAX-BATCH-1", "SET-BATCH-COMBINED"),
+                ("TAX-BATCH-2", "SET-BATCH-COMBINED"),
+            },
+        )
 
 
 class SystemHealthViewTests(TestCase):

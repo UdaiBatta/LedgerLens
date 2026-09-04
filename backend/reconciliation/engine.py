@@ -23,6 +23,17 @@ class RuleOutcome:
     details: str
 
 
+@dataclass(frozen=True)
+class PaymentBreakdown:
+    order: FinancialRecord | None
+    payment: FinancialRecord
+    fee: FinancialRecord | None
+    tax: FinancialRecord | None
+    captured_amount: int
+    expected_fee: int
+    expected_tax: int
+
+
 class ReconciliationEngine:
     processing_fee_basis_points = 120
     tax_on_fee_basis_points = 1800
@@ -44,37 +55,32 @@ class ReconciliationEngine:
             raise ValidationError("Every record must belong to the requested entity trace.")
         if len({record.currency for record in ordered_records}) != 1:
             raise ValidationError("A reconciliation trace cannot mix currencies.")
-        order = self._first(ordered_records, FinancialRecordType.ORDER)
         payments = [
             record
             for record in ordered_records
             if record.record_type == FinancialRecordType.PAYMENT
         ]
-        if len(payments) != 1:
-            raise ValidationError(
-                "Exactly one payment record is required until batched settlement rules are enabled."
-            )
-        payment = payments[0]
-        fee = self._first(ordered_records, FinancialRecordType.FEE)
-        tax = self._first(ordered_records, FinancialRecordType.TAX)
+        if not payments:
+            raise ValidationError("At least one payment record is required.")
         settlement = self._first(ordered_records, FinancialRecordType.SETTLEMENT)
         bank_credit = self._first(ordered_records, FinancialRecordType.BANK_CREDIT)
         refunds = self._sum(ordered_records, FinancialRecordType.REFUND)
 
-        captured_amount = payment.amount_minor if payment else 0
-        expected_fee = self._apply_basis_points(captured_amount, self.processing_fee_basis_points)
-        expected_tax = self._apply_basis_points(expected_fee, self.tax_on_fee_basis_points)
-        expected_settlement = captured_amount - refunds - expected_fee - expected_tax
+        payment_breakdowns = [
+            self._payment_breakdown(payment, ordered_records, single_payment=len(payments) == 1)
+            for payment in payments
+        ]
+        captured_amount = sum(breakdown.captured_amount for breakdown in payment_breakdowns)
+        expected_fee_total = sum(breakdown.expected_fee for breakdown in payment_breakdowns)
+        expected_tax_total = sum(breakdown.expected_tax for breakdown in payment_breakdowns)
+        expected_settlement = captured_amount - refunds - expected_fee_total - expected_tax_total
         actual_amount = bank_credit.amount_minor if bank_credit else 0
 
         first_break, exception_type, status, first_break_expected, first_break_actual = self._classify(
-            payment,
-            fee,
-            tax,
+            payments,
+            payment_breakdowns,
             settlement,
             bank_credit,
-            expected_fee,
-            expected_tax,
             expected_settlement,
             actual_amount,
         )
@@ -86,7 +92,7 @@ class ReconciliationEngine:
                 "entity_id": entity_id,
                 "exception_type": exception_type,
                 "status": status,
-                "currency": payment.currency if payment else "INR",
+                "currency": payments[0].currency,
                 "expected_amount_minor": first_break_expected,
                 "actual_amount_minor": first_break_actual,
                 "first_break_record": first_break,
@@ -94,14 +100,10 @@ class ReconciliationEngine:
         )
 
         for outcome in self._run_checks(
-            order,
-            payment,
-            fee,
-            tax,
+            payments,
+            payment_breakdowns,
             settlement,
             bank_credit,
-            expected_fee,
-            expected_tax,
             expected_settlement,
         ):
             CheckResult.objects.update_or_create(
@@ -117,24 +119,89 @@ class ReconciliationEngine:
         EvidenceMatcher().build_connections(reconciliation_case, ordered_records)
         return reconciliation_case
 
+    def _payment_breakdown(self, payment, ordered_records, single_payment) -> "PaymentBreakdown":
+        order = self._order_for_payment(ordered_records, payment, single_payment)
+        fee = self._linked_record(ordered_records, FinancialRecordType.FEE, payment, single_payment)
+        tax = (
+            self._linked_record(ordered_records, FinancialRecordType.TAX, fee, single_payment)
+            if fee
+            else None
+        )
+        expected_fee = self._apply_basis_points(payment.amount_minor, self.processing_fee_basis_points)
+        expected_tax = self._apply_basis_points(expected_fee, self.tax_on_fee_basis_points)
+        return PaymentBreakdown(
+            order=order,
+            payment=payment,
+            fee=fee,
+            tax=tax,
+            captured_amount=payment.amount_minor,
+            expected_fee=expected_fee,
+            expected_tax=expected_tax,
+        )
+
+    def _order_for_payment(self, ordered_records, payment, single_payment):
+        orders = [
+            record for record in ordered_records if record.record_type == FinancialRecordType.ORDER
+        ]
+        if single_payment and len(orders) <= 1:
+            return orders[0] if orders else None
+        payment_reference = payment.reference or payment.raw_payload.get("linked_reference")
+        return next(
+            (order for order in orders if order.external_record_id == payment_reference),
+            None,
+        )
+
+    def _linked_record(self, ordered_records, record_type, predecessor, single_payment):
+        candidates = [
+            record for record in ordered_records if record.record_type == record_type
+        ]
+        if single_payment and len(candidates) <= 1:
+            return candidates[0] if candidates else None
+        return next(
+            (
+                record
+                for record in candidates
+                if (record.reference or record.raw_payload.get("linked_reference"))
+                == predecessor.external_record_id
+            ),
+            None,
+        )
+
     def _classify(
         self,
-        payment,
-        fee,
-        tax,
+        payments,
+        payment_breakdowns,
         settlement,
         bank_credit,
-        expected_fee,
-        expected_tax,
         expected_settlement,
         actual_bank_amount,
     ):
-        if fee and fee.amount_minor != expected_fee:
-            return fee, "fee_mismatch", ReconciliationStatus.NEEDS_REVIEW, expected_fee, fee.amount_minor
-        if tax and tax.amount_minor != expected_tax:
-            return tax, "tax_mismatch", ReconciliationStatus.NEEDS_REVIEW, expected_tax, tax.amount_minor
+        for breakdown in payment_breakdowns:
+            if breakdown.fee and breakdown.fee.amount_minor != breakdown.expected_fee:
+                return (
+                    breakdown.fee,
+                    "fee_mismatch",
+                    ReconciliationStatus.NEEDS_REVIEW,
+                    breakdown.expected_fee,
+                    breakdown.fee.amount_minor,
+                )
+        for breakdown in payment_breakdowns:
+            if breakdown.tax and breakdown.tax.amount_minor != breakdown.expected_tax:
+                return (
+                    breakdown.tax,
+                    "tax_mismatch",
+                    ReconciliationStatus.NEEDS_REVIEW,
+                    breakdown.expected_tax,
+                    breakdown.tax.amount_minor,
+                )
         if not settlement:
-            return payment, "settlement_missing", ReconciliationStatus.NEEDS_REVIEW, expected_settlement, 0
+            return (
+                payments[-1],
+                "settlement_missing",
+                ReconciliationStatus.NEEDS_REVIEW,
+                expected_settlement,
+                0,
+            )
         if settlement.amount_minor != expected_settlement:
             return (
                 settlement,
@@ -163,58 +230,70 @@ class ReconciliationEngine:
 
     def _run_checks(
         self,
-        order,
-        payment,
-        fee,
-        tax,
+        payments,
+        payment_breakdowns,
         settlement,
         bank_credit,
-        expected_fee,
-        expected_tax,
         expected_settlement,
     ) -> list[RuleOutcome]:
-        return [
-            self._comparison(
-                "Order amount matches capture",
-                order,
-                payment,
-                order.amount_minor if order else None,
-                payment.amount_minor if payment else None,
-            ),
-            self._comparison(
-                "Processing fee calculation",
-                payment,
-                fee,
-                expected_fee,
-                fee.amount_minor if fee else None,
-            ),
-            self._comparison(
-                "Tax on fee calculation",
-                fee,
-                tax,
-                expected_tax,
-                tax.amount_minor if tax else None,
-            ),
+        single_payment = len(payments) == 1
+        checks = []
+        for breakdown in payment_breakdowns:
+            suffix = "" if single_payment else f" ({breakdown.payment.external_record_id})"
+            checks.append(
+                self._comparison(
+                    f"Order amount matches capture{suffix}",
+                    breakdown.order,
+                    breakdown.payment,
+                    breakdown.order.amount_minor if breakdown.order else None,
+                    breakdown.payment.amount_minor,
+                )
+            )
+            checks.append(
+                self._comparison(
+                    f"Processing fee calculation{suffix}",
+                    breakdown.payment,
+                    breakdown.fee,
+                    breakdown.expected_fee,
+                    breakdown.fee.amount_minor if breakdown.fee else None,
+                )
+            )
+            checks.append(
+                self._comparison(
+                    f"Tax on fee calculation{suffix}",
+                    breakdown.fee,
+                    breakdown.tax,
+                    breakdown.expected_tax,
+                    breakdown.tax.amount_minor if breakdown.tax else None,
+                )
+            )
+        checks.append(
             self._comparison(
                 "Settlement amount calculation",
-                payment,
+                payments[0],
                 settlement,
                 expected_settlement,
                 settlement.amount_minor if settlement else None,
-            ),
+            )
+        )
+        checks.append(
             RuleOutcome(
                 "Settlement acknowledged by bank",
                 CheckResultStatus.PASSED if bank_credit else CheckResultStatus.WAITING,
                 self._references(settlement, bank_credit),
                 "Bank credit found." if bank_credit else "No bank credit has been ingested yet.",
-            ),
+            )
+        )
+        checks.append(
             self._comparison(
                 "Bank credit equals settlement",
                 settlement,
                 bank_credit,
                 settlement.amount_minor if settlement else None,
                 bank_credit.amount_minor if bank_credit else None,
-            ),
+            )
+        )
+        checks.append(
             RuleOutcome(
                 "Reconciliation note present",
                 (
@@ -226,8 +305,9 @@ class ReconciliationEngine:
                 "An adjustment note explains the difference."
                 if bank_credit and bank_credit.raw_payload.get("adjustment_note")
                 else "No adjustment record explains the difference.",
-            ),
-        ]
+            )
+        )
+        return checks
 
     def _comparison(self, name, first_record, second_record, expected, actual) -> RuleOutcome:
         if expected is None or actual is None:
