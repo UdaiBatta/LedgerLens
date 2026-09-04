@@ -63,6 +63,31 @@ export type ReconciliationCaseDetail = ReconciliationCaseSummary & {
   agent_runs: AgentRun[]
 }
 
+export type EvidenceGraphEdge = {
+  id: number
+  source: number
+  target: number
+  method: string
+  confidence: string
+  rationale: Record<string, unknown>
+  created_by: string
+}
+
+export type EvidenceGraph = {
+  nodes: FinancialRecord[]
+  edges: EvidenceGraphEdge[]
+}
+
+export type AuditLogEntry = {
+  event_type: "agent_run" | "evidence_connection"
+  occurred_at: string
+  case_reference: string
+  case_public_id: string
+  actor: string
+  summary: string
+  details: Record<string, unknown>
+}
+
 export type OverviewMetrics = {
   captured_amount_minor: number
   case_count: number
@@ -116,4 +141,12 @@ export function askInvestigator(publicId: string, question: string) {
     method: "POST",
     body: JSON.stringify({ question }),
   })
+}
+
+export function getEvidenceGraph(publicId: string) {
+  return request<EvidenceGraph>(`/api/cases/${publicId}/evidence-graph/`)
+}
+
+export function getAuditLog() {
+  return request<AuditLogEntry[]>("/api/audit-log/")
 }

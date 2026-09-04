@@ -50,9 +50,13 @@ import {
 import {
   askInvestigator,
   assignCase,
+  getAuditLog,
   getCase,
   getCases,
+  getEvidenceGraph,
   getOverviewMetrics,
+  type AuditLogEntry,
+  type EvidenceGraph,
   type FinancialRecord,
   type OverviewMetrics,
   type ReconciliationCaseDetail,
@@ -61,7 +65,7 @@ import {
 
 const CRTWarp = lazy(() => import("@/components/CRTWarp"))
 
-type Screen = "landing" | "dashboard" | "case"
+type Screen = "landing" | "dashboard" | "case" | "moneyGraph" | "auditLog"
 
 function formatMoney(amountMinor: number, currency = "INR") {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency }).format(amountMinor / 100)
@@ -225,14 +229,26 @@ function HeroTrace({ openDashboard }: { openDashboard: () => void }) {
   )
 }
 
-function AppShell({ active, children, goLanding, goDashboard }: { active: string; children: React.ReactNode; goLanding: () => void; goDashboard: () => void }) {
+function AppShell({ active, children, goLanding, goDashboard, goMoneyGraph, goAuditLog }: { active: string; children: React.ReactNode; goLanding: () => void; goDashboard: () => void; goMoneyGraph?: () => void; goAuditLog?: () => void }) {
+  const enabledLabels = new Set([
+    "Overview",
+    "Exceptions",
+    ...(goMoneyGraph ? ["Money Graph"] : []),
+    ...(goAuditLog ? ["Audit Log"] : []),
+  ])
+  const navigationHandlers: Record<string, () => void> = {
+    Overview: goDashboard,
+    Exceptions: goDashboard,
+    ...(goMoneyGraph ? { "Money Graph": goMoneyGraph } : {}),
+    ...(goAuditLog ? { "Audit Log": goAuditLog } : {}),
+  }
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main-content">Skip to main content</a>
       <aside className="app-sidebar">
         <button className="app-sidebar__brand" onClick={goLanding} aria-label="Go to LedgerLens landing page"><Brand inverse /></button>
         <div className="workspace-switcher"><small>Workspace</small><strong>Acme FinOps</strong><span>Demo data</span></div>
-        <nav aria-label="Application navigation">{appNav.map(([label, Icon]) => <button key={label} className={label === active ? "active" : ""} aria-current={label === active ? "page" : undefined} aria-disabled={label !== "Overview" && label !== "Exceptions"} title={label !== "Overview" && label !== "Exceptions" ? "Planned after the investigation workflow" : undefined} onClick={label === "Overview" ? goDashboard : undefined}><Icon aria-hidden="true" />{label}</button>)}</nav>
+        <nav aria-label="Application navigation">{appNav.map(([label, Icon]) => { const enabled = enabledLabels.has(label); return <button key={label} className={label === active ? "active" : ""} aria-current={label === active ? "page" : undefined} aria-disabled={!enabled} title={enabled ? undefined : "Planned after the investigation workflow"} onClick={enabled ? navigationHandlers[label] : undefined}><Icon aria-hidden="true" />{label}</button> })}</nav>
         <a className="repo-link" href="https://github.com/UdaiBatta/LedgerLens" target="_blank" rel="noreferrer"><Code2 aria-hidden="true" />View repository</a>
       </aside>
       <div className="app-workspace">
@@ -243,7 +259,7 @@ function AppShell({ active, children, goLanding, goDashboard }: { active: string
   )
 }
 
-function Dashboard({ goLanding, openCase }: { goLanding: () => void; openCase: (publicId: string) => void }) {
+function Dashboard({ goLanding, openCase, goAuditLog }: { goLanding: () => void; openCase: (publicId: string) => void; goAuditLog: () => void }) {
   const [filter, setFilter] = useState("All")
   const [cases, setCases] = useState<ReconciliationCaseSummary[]>([])
   const [metrics, setMetrics] = useState<OverviewMetrics | null>(null)
@@ -267,7 +283,7 @@ function Dashboard({ goLanding, openCase }: { goLanding: () => void; openCase: (
   const firstCaseId = cases.find((item) => item.status !== "matched")?.public_id
 
   return (
-    <AppShell active="Overview" goLanding={goLanding} goDashboard={() => undefined}>
+    <AppShell active="Overview" goLanding={goLanding} goDashboard={() => undefined} goAuditLog={goAuditLog}>
       <main className="dashboard" id="main-content">
         <header className="dashboard__heading"><div><p>Reconciliation overview</p><h1>Financial truth, in one place.</h1><span>Live data from the Django reconciliation API</span></div><Button onClick={() => firstCaseId && openCase(firstCaseId)} disabled={!firstCaseId}>Review exceptions <ArrowRight data-icon="inline-end" aria-hidden="true" /></Button></header>
         {loading ? <p className="api-state" role="status">Loading reconciliation data…</p> : null}
@@ -320,7 +336,7 @@ function Exceptions({ rows, filter, setFilter, openCase }: { rows: Reconciliatio
   )
 }
 
-function CaseDetail({ publicId, goLanding, goDashboard }: { publicId: string; goLanding: () => void; goDashboard: () => void }) {
+function CaseDetail({ publicId, goLanding, goDashboard, goMoneyGraph, goAuditLog }: { publicId: string; goLanding: () => void; goDashboard: () => void; goMoneyGraph: (publicId: string) => void; goAuditLog: () => void }) {
   const [reconciliationCase, setReconciliationCase] = useState<ReconciliationCaseDetail | null>(null)
   const [selectedRecord, setSelectedRecord] = useState<FinancialRecord | null>(null)
   const [question, setQuestion] = useState("")
@@ -379,7 +395,7 @@ function CaseDetail({ publicId, goLanding, goDashboard }: { publicId: string; go
   const passedChecks = reconciliationCase?.check_results.filter((check) => check.result === "passed").length ?? 0
 
   return (
-    <AppShell active="Exceptions" goLanding={goLanding} goDashboard={goDashboard}>
+    <AppShell active="Exceptions" goLanding={goLanding} goDashboard={goDashboard} goMoneyGraph={() => goMoneyGraph(publicId)} goAuditLog={goAuditLog}>
       <main className="case-page" id="main-content">
         <button className="back-button" onClick={goDashboard}><ArrowLeft aria-hidden="true" />Back to overview</button>
         {loading ? <p className="api-state" role="status">Loading investigation…</p> : null}
@@ -387,7 +403,7 @@ function CaseDetail({ publicId, goLanding, goDashboard }: { publicId: string; go
         {reconciliationCase ? <>
           <header className="case-heading"><div><div><h1>{readableLabel(reconciliationCase.exception_type)} · {formatMoney(Math.abs(reconciliationCase.difference_minor), reconciliationCase.currency)}</h1><span className={`status status--${readableLabel(reconciliationCase.status).toLowerCase().replace(" ", "-")}`}>{readableLabel(reconciliationCase.status)}</span></div><p><code>{reconciliationCase.case_reference}</code> · {reconciliationCase.entity_id}</p></div><Button onClick={assignToMe} disabled={reconciliationCase.owner === "Neha Sharma"}>{reconciliationCase.owner === "Neha Sharma" ? <Check data-icon="inline-start" aria-hidden="true" /> : <UserPlus data-icon="inline-start" aria-hidden="true" />}{reconciliationCase.owner === "Neha Sharma" ? "Assigned to you" : "Assign case"}</Button></header>
           <section className="case-layout">
-            <article className="case-path"><header><span>Transaction path</span><Badge variant="secondary">Rule generated</Badge></header><ol>{pathRecords.map((record, index) => { const icons = [FileCheck2, BadgeIndianRupee, Banknote, BadgeIndianRupee, Landmark, Building2, ReceiptText]; const Icon = icons[index % icons.length]; const isBreak = record.id === reconciliationCase.first_break_record?.id; const isAdjustment = ["fee", "tax", "refund"].includes(record.record_type); const state = isBreak ? "mismatch" : isAdjustment ? "fee" : "verified"; return <li className={`case-path__step case-path__step--${state}`} key={record.id}><button className={state} onClick={() => setSelectedRecord(record)}><span><Icon aria-hidden="true" /></span><div><strong>{readableLabel(record.record_type)}</strong><code>{record.external_record_id}</code><small>{new Date(record.occurred_at).toLocaleString("en-IN")}</small><em>{isBreak ? "First divergence" : isAdjustment ? "Derived adjustment" : "Verified source"}</em></div><b>{formatMoney(record.amount_minor, record.currency)}</b></button></li>})}</ol>{reconciliationCase.first_break_record ? <div className="case-path__alert"><AlertTriangle aria-hidden="true" /><p><strong>First divergence</strong>Actual differs from expected by {formatMoney(Math.abs(reconciliationCase.difference_minor), reconciliationCase.currency)}. Select any record to inspect its source payload.</p></div> : null}</article>
+            <article className="case-path"><header><span>Transaction path</span><button className="open-graph-link" onClick={() => goMoneyGraph(publicId)}><Network aria-hidden="true" />Open money graph</button></header><ol>{pathRecords.map((record, index) => { const icons = [FileCheck2, BadgeIndianRupee, Banknote, BadgeIndianRupee, Landmark, Building2, ReceiptText]; const Icon = icons[index % icons.length]; const isBreak = record.id === reconciliationCase.first_break_record?.id; const isAdjustment = ["fee", "tax", "refund"].includes(record.record_type); const state = isBreak ? "mismatch" : isAdjustment ? "fee" : "verified"; return <li className={`case-path__step case-path__step--${state}`} key={record.id}><button className={state} onClick={() => setSelectedRecord(record)}><span><Icon aria-hidden="true" /></span><div><strong>{readableLabel(record.record_type)}</strong><code>{record.external_record_id}</code><small>{new Date(record.occurred_at).toLocaleString("en-IN")}</small><em>{isBreak ? "First divergence" : isAdjustment ? "Derived adjustment" : "Verified source"}</em></div><b>{formatMoney(record.amount_minor, record.currency)}</b></button></li>})}</ol>{reconciliationCase.first_break_record ? <div className="case-path__alert"><AlertTriangle aria-hidden="true" /><p><strong>First divergence</strong>Actual differs from expected by {formatMoney(Math.abs(reconciliationCase.difference_minor), reconciliationCase.currency)}. Select any record to inspect its source payload.</p></div> : null}</article>
             <article className="case-finding"><header><div><Bot aria-hidden="true" /><span>AI Investigator</span></div><Badge>{latestRun ? `${Math.round(Number(latestRun.confidence) * 100)}% confidence` : "Ready"}</Badge></header><p className="case-finding__meta">Based on {reconciliationCase.check_results.length} deterministic checks and cited source records</p><h2>{latestRun?.conclusion ?? "Ask a question after reviewing the deterministic evidence."}</h2>{latestRun ? <><div className="citations">{latestRun.evidence_cited.map((reference) => <button key={reference} onClick={() => setSelectedRecord(pathRecords.find((record) => record.external_record_id === reference) ?? null)}>{reference}</button>)}</div><section><h3>Recommended next action</h3><p>{latestRun.recommended_action}</p></section></> : null}<div className="agent-history">{reconciliationCase.agent_runs.map((run) => <article key={run.id}><strong>{run.question}</strong><p>{run.conclusion}</p><small>{run.model_version}</small></article>)}</div><form onSubmit={ask}><label htmlFor="investigator-question">Ask about this case</label><div><input id="investigator-question" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Why is this case still open?" disabled={asking} /><button type="submit" aria-label="Ask AI Investigator" disabled={asking}>{asking ? "…" : <ArrowRight aria-hidden="true" />}</button></div></form><small><ShieldCheck aria-hidden="true" />Analysis only. No source records or money movements were changed.</small></article>
           </section>
           <section className="checks-section"><header><div><h2>Checks and evidence</h2><span>Deterministic output supplied to the AI investigator</span></div><Badge variant="outline">{passedChecks} passed · {reconciliationCase.check_results.length - passedChecks} unresolved</Badge></header><Table><TableHeader><TableRow><TableHead>Check</TableHead><TableHead>Result</TableHead><TableHead>Evidence</TableHead></TableRow></TableHeader><TableBody>{reconciliationCase.check_results.map((item) => <TableRow key={item.check_name}><TableCell>{item.check_name}</TableCell><TableCell><span className={`check check--${item.result}`}>{item.result === "passed" ? <Check aria-hidden="true" /> : <AlertTriangle aria-hidden="true" />}{readableLabel(item.result)}</span></TableCell><TableCell><div className="evidence-buttons">{item.evidence.map((reference) => <button key={reference} onClick={() => setSelectedRecord(pathRecords.find((record) => record.external_record_id === reference) ?? null)}>{reference}</button>)}</div></TableCell></TableRow>)}</TableBody></Table></section>
@@ -403,19 +419,168 @@ function CaseDetail({ publicId, goLanding, goDashboard }: { publicId: string; go
   )
 }
 
+function MoneyGraphPage({ publicId, goLanding, goDashboard, goCase, goAuditLog }: { publicId: string; goLanding: () => void; goDashboard: () => void; goCase: (publicId: string) => void; goAuditLog: () => void }) {
+  const [evidenceGraph, setEvidenceGraph] = useState<EvidenceGraph | null>(null)
+  const [selectedRecord, setSelectedRecord] = useState<FinancialRecord | null>(null)
+  const [loading, setLoading] = useState(Boolean(publicId))
+  const [error, setError] = useState(publicId ? "" : "No reconciliation case was selected.")
+
+  useEffect(() => {
+    if (!publicId) {
+      return
+    }
+    getEvidenceGraph(publicId)
+      .then(setEvidenceGraph)
+      .catch((requestError: Error) => setError(requestError.message))
+      .finally(() => setLoading(false))
+  }, [publicId])
+
+  const orderedNodes = useMemo(() => {
+    if (!evidenceGraph) return []
+    return [...evidenceGraph.nodes].sort(
+      (first, second) => new Date(first.occurred_at).getTime() - new Date(second.occurred_at).getTime(),
+    )
+  }, [evidenceGraph])
+
+  const nodePositionById = useMemo(() => {
+    const positions = new Map<number, { x: number; y: number }>()
+    const horizontalSpacing = 220
+    orderedNodes.forEach((node, index) => {
+      positions.set(node.id, { x: 90 + index * horizontalSpacing, y: 120 })
+    })
+    return positions
+  }, [orderedNodes])
+
+  const diagramWidth = Math.max(600, 90 + orderedNodes.length * 220)
+
+  return (
+    <AppShell active="Money Graph" goLanding={goLanding} goDashboard={goDashboard} goAuditLog={goAuditLog}>
+      <main className="money-graph-page" id="main-content">
+        <button className="back-button" onClick={() => goCase(publicId)}><ArrowLeft aria-hidden="true" />Back to case</button>
+        {loading ? <p className="api-state" role="status">Loading evidence graph…</p> : null}
+        {error ? <p className="api-state api-state--error" role="alert">{error}</p> : null}
+        {evidenceGraph ? <>
+          <header className="money-graph-page__heading"><div><span>Money graph</span><h1>How this case's records connect</h1><p>Every link was produced by the deterministic evidence matcher, never invented by the AI investigator.</p></div></header>
+          <div className="money-graph-diagram" role="img" aria-label="Diagram of financial records connected by evidence matches">
+            <svg width={diagramWidth} height="240" viewBox={`0 0 ${diagramWidth} 240`}>
+              {evidenceGraph.edges.map((edge) => {
+                const from = nodePositionById.get(edge.source)
+                const to = nodePositionById.get(edge.target)
+                if (!from || !to) return null
+                const isExactMatch = Number(edge.confidence) >= 1
+                return (
+                  <g key={edge.id}>
+                    <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke={isExactMatch ? "#4258cf" : "#d78826"} strokeWidth={2} strokeDasharray={isExactMatch ? undefined : "6 5"} />
+                    <text x={(from.x + to.x) / 2} y={from.y - 14} textAnchor="middle" className="money-graph-diagram__edge-label">{Math.round(Number(edge.confidence) * 100)}%</text>
+                  </g>
+                )
+              })}
+              {orderedNodes.map((node) => {
+                const position = nodePositionById.get(node.id)
+                if (!position) return null
+                return (
+                  <g key={node.id} className="money-graph-diagram__node" onClick={() => setSelectedRecord(node)} role="button" tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter") setSelectedRecord(node) }}>
+                    <circle cx={position.x} cy={position.y} r={30} />
+                    <text x={position.x} y={position.y - 4} textAnchor="middle" className="money-graph-diagram__node-type">{readableLabel(node.record_type)}</text>
+                    <text x={position.x} y={position.y + 12} textAnchor="middle" className="money-graph-diagram__node-amount">{formatMoney(node.amount_minor, node.currency)}</text>
+                  </g>
+                )
+              })}
+            </svg>
+          </div>
+          <section className="money-graph-edge-list">
+            <header><h2>Evidence connections</h2><span>Method, confidence, and rationale behind every link</span></header>
+            <Table><TableHeader><TableRow><TableHead>From</TableHead><TableHead>To</TableHead><TableHead>Method</TableHead><TableHead>Confidence</TableHead><TableHead>Created by</TableHead></TableRow></TableHeader><TableBody>{evidenceGraph.edges.map((edge) => { const sourceRecord = evidenceGraph.nodes.find((node) => node.id === edge.source); const targetRecord = evidenceGraph.nodes.find((node) => node.id === edge.target); return <TableRow key={edge.id}><TableCell>{sourceRecord?.external_record_id}</TableCell><TableCell>{targetRecord?.external_record_id}</TableCell><TableCell>{readableLabel(edge.method)}</TableCell><TableCell>{Math.round(Number(edge.confidence) * 100)}%</TableCell><TableCell>{readableLabel(edge.created_by)}</TableCell></TableRow> })}</TableBody></Table>
+          </section>
+        </> : null}
+      </main>
+      <Sheet open={Boolean(selectedRecord)} onOpenChange={(open) => { if (!open) setSelectedRecord(null) }}>
+        <SheetContent className="evidence-sheet">
+          <SheetHeader><SheetTitle>Source evidence</SheetTitle><SheetDescription>Immutable record received from {selectedRecord?.source_name}.</SheetDescription></SheetHeader>
+          {selectedRecord ? <div className="evidence-sheet__body"><dl><div><dt>Reference</dt><dd>{selectedRecord.external_record_id}</dd></div><div><dt>Type</dt><dd>{readableLabel(selectedRecord.record_type)}</dd></div><div><dt>Amount</dt><dd>{formatMoney(selectedRecord.amount_minor, selectedRecord.currency)}</dd></div><div><dt>Occurred</dt><dd>{new Date(selectedRecord.occurred_at).toLocaleString("en-IN")}</dd></div></dl><h3>Raw source payload</h3><pre>{JSON.stringify(selectedRecord.raw_payload, null, 2)}</pre></div> : null}
+        </SheetContent>
+      </Sheet>
+    </AppShell>
+  )
+}
+
+function AuditLogPage({ goLanding, goDashboard, goCase }: { goLanding: () => void; goDashboard: () => void; goCase: (publicId: string) => void }) {
+  const [entries, setEntries] = useState<AuditLogEntry[]>([])
+  const [filter, setFilter] = useState<"All" | "Investigator runs" | "Evidence links">("All")
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState("")
+
+  useEffect(() => {
+    getAuditLog()
+      .then(setEntries)
+      .catch((requestError: Error) => setError(requestError.message))
+      .finally(() => setLoading(false))
+  }, [])
+
+  const filteredEntries = useMemo(() => {
+    if (filter === "Investigator runs") return entries.filter((entry) => entry.event_type === "agent_run")
+    if (filter === "Evidence links") return entries.filter((entry) => entry.event_type === "evidence_connection")
+    return entries
+  }, [entries, filter])
+
+  return (
+    <AppShell active="Audit Log" goLanding={goLanding} goDashboard={goDashboard} goAuditLog={() => undefined}>
+      <main className="audit-log-page" id="main-content">
+        <header className="audit-log-page__heading">
+          <div><span>Audit log</span><h1>Every AI action and evidence link, in order</h1><p>Generated directly from stored investigator runs and evidence connections — nothing here is summarized or reconstructed after the fact.</p></div>
+          <div className="filters" aria-label="Filter audit log">{(["All", "Investigator runs", "Evidence links"] as const).map((item) => <button key={item} onClick={() => setFilter(item)} className={filter === item ? "active" : ""} aria-pressed={filter === item}>{item}</button>)}</div>
+        </header>
+        {loading ? <p className="api-state" role="status">Loading audit log…</p> : null}
+        {error ? <p className="api-state api-state--error" role="alert">{error}</p> : null}
+        {!loading && !error ? (
+          filteredEntries.length === 0 ? <p className="api-state">No audit entries match this filter.</p> : (
+            <ol className="audit-log-list">
+              {filteredEntries.map((entry, index) => (
+                <li key={`${entry.event_type}-${entry.case_public_id}-${index}`} className={`audit-log-list__item audit-log-list__item--${entry.event_type}`}>
+                  <div className="audit-log-list__marker" aria-hidden="true">{entry.event_type === "agent_run" ? <Bot /> : <Link2 />}</div>
+                  <div className="audit-log-list__body">
+                    <header><strong>{entry.summary}</strong><time dateTime={entry.occurred_at}>{new Date(entry.occurred_at).toLocaleString("en-IN")}</time></header>
+                    <p><button className="case-id" onClick={() => goCase(entry.case_public_id)}>{entry.case_reference}</button> · {entry.actor}</p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          )
+        ) : null}
+      </main>
+    </AppShell>
+  )
+}
+
 export default function App() {
-  const initialCaseId = window.location.hash.startsWith("#case/") ? window.location.hash.slice(6) : ""
-  const [screen, setScreen] = useState<Screen>(() => initialCaseId ? "case" : window.location.hash === "#app" ? "dashboard" : "landing")
+  const initialCaseId = window.location.hash.startsWith("#case/")
+    ? window.location.hash.slice(6)
+    : window.location.hash.startsWith("#money-graph/")
+      ? window.location.hash.slice(13)
+      : ""
+  const [screen, setScreen] = useState<Screen>(() => {
+    if (window.location.hash.startsWith("#money-graph/")) return "moneyGraph"
+    if (window.location.hash === "#audit-log") return "auditLog"
+    if (initialCaseId) return "case"
+    return window.location.hash === "#app" ? "dashboard" : "landing"
+  })
   const [selectedCaseId, setSelectedCaseId] = useState(initialCaseId)
 
   function navigate(next: Screen, publicId = "") {
     setScreen(next)
     setSelectedCaseId(publicId)
-    window.location.hash = next === "dashboard" ? "app" : next === "case" ? `case/${publicId}` : ""
+    window.location.hash =
+      next === "dashboard" ? "app"
+      : next === "case" ? `case/${publicId}`
+      : next === "moneyGraph" ? `money-graph/${publicId}`
+      : next === "auditLog" ? "audit-log"
+      : ""
     window.scrollTo({ top: 0, behavior: "smooth" })
   }
 
-  if (screen === "dashboard") return <Dashboard goLanding={() => navigate("landing")} openCase={(publicId) => navigate("case", publicId)} />
-  if (screen === "case") return <CaseDetail publicId={selectedCaseId} goLanding={() => navigate("landing")} goDashboard={() => navigate("dashboard")} />
+  if (screen === "dashboard") return <Dashboard goLanding={() => navigate("landing")} openCase={(publicId) => navigate("case", publicId)} goAuditLog={() => navigate("auditLog")} />
+  if (screen === "case") return <CaseDetail publicId={selectedCaseId} goLanding={() => navigate("landing")} goDashboard={() => navigate("dashboard")} goMoneyGraph={(publicId) => navigate("moneyGraph", publicId)} goAuditLog={() => navigate("auditLog")} />
+  if (screen === "moneyGraph") return <MoneyGraphPage publicId={selectedCaseId} goLanding={() => navigate("landing")} goDashboard={() => navigate("dashboard")} goCase={(publicId) => navigate("case", publicId)} goAuditLog={() => navigate("auditLog")} />
+  if (screen === "auditLog") return <AuditLogPage goLanding={() => navigate("landing")} goDashboard={() => navigate("dashboard")} goCase={(publicId) => navigate("case", publicId)} />
   return <Landing openDashboard={() => navigate("dashboard")} />
 }

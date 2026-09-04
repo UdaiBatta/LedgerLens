@@ -5,9 +5,10 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .agent import InvestigationAgent
-from .models import FinancialRecord, FinancialRecordType, ReconciliationCase, ReconciliationStatus
+from .models import AgentRun, EvidenceConnection, FinancialRecord, FinancialRecordType, ReconciliationCase, ReconciliationStatus
 from .serializers import (
     AgentRunSerializer,
+    AuditLogEntrySerializer,
     FinancialRecordSerializer,
     ReconciliationCaseDetailSerializer,
     ReconciliationCaseListSerializer,
@@ -141,3 +142,52 @@ class OverviewMetricsView(APIView):
                 "movement": movement,
             }
         )
+
+
+class AuditLogView(APIView):
+    def get(self, request):
+        agent_run_entries = [
+            {
+                "event_type": "agent_run",
+                "occurred_at": agent_run.created_at,
+                "case_reference": agent_run.reconciliation_case.case_reference,
+                "case_public_id": agent_run.reconciliation_case.public_id,
+                "actor": agent_run.model_version,
+                "summary": f'Investigator asked "{agent_run.question}"',
+                "details": {
+                    "conclusion": agent_run.conclusion,
+                    "confidence": str(agent_run.confidence),
+                    "sufficient_evidence": agent_run.sufficient_evidence,
+                    "evidence_cited": agent_run.evidence_cited,
+                },
+            }
+            for agent_run in AgentRun.objects.select_related("reconciliation_case")
+        ]
+        evidence_connection_entries = [
+            {
+                "event_type": "evidence_connection",
+                "occurred_at": evidence_connection.created_at,
+                "case_reference": evidence_connection.reconciliation_case.case_reference,
+                "case_public_id": evidence_connection.reconciliation_case.public_id,
+                "actor": evidence_connection.created_by,
+                "summary": (
+                    f"Linked {evidence_connection.source_record.external_record_id} to "
+                    f"{evidence_connection.destination_record.external_record_id} "
+                    f"({evidence_connection.get_match_method_display()})"
+                ),
+                "details": {
+                    "confidence": str(evidence_connection.confidence),
+                    "matching_reason": evidence_connection.matching_reason,
+                    "is_verified": evidence_connection.is_verified,
+                },
+            }
+            for evidence_connection in EvidenceConnection.objects.select_related(
+                "reconciliation_case", "source_record", "destination_record"
+            )
+        ]
+        entries = sorted(
+            agent_run_entries + evidence_connection_entries,
+            key=lambda entry: entry["occurred_at"],
+            reverse=True,
+        )
+        return Response(AuditLogEntrySerializer(entries, many=True).data)

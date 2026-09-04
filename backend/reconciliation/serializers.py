@@ -87,6 +87,16 @@ class ReconciliationCaseListSerializer(serializers.ModelSerializer):
         )
 
 
+class AuditLogEntrySerializer(serializers.Serializer):
+    event_type = serializers.CharField()
+    occurred_at = serializers.DateTimeField()
+    case_reference = serializers.CharField()
+    case_public_id = serializers.UUIDField()
+    actor = serializers.CharField()
+    summary = serializers.CharField()
+    details = serializers.DictField()
+
+
 class ReconciliationCaseDetailSerializer(ReconciliationCaseListSerializer):
     first_break_record = FinancialRecordSerializer(read_only=True)
     check_results = CheckResultSerializer(many=True, read_only=True)

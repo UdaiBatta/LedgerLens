@@ -400,6 +400,42 @@ code, .money { font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monosp
 .check--failed { color: #b43745; }
 .check--waiting { color: #a1610e; }
 
+/* Money graph */
+.open-graph-link { display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 0; border: 0; color: #4258cf; background: transparent; font-size: 11px; font-weight: 650; }
+.open-graph-link svg { width: 14px; height: 14px; }
+.money-graph-page { width: 100%; max-width: 1540px; margin: 0 auto; padding: 42px clamp(22px, 3vw, 52px) 64px; }
+.money-graph-page__heading { margin: 18px 0 26px; }
+.money-graph-page__heading span { color: #6b7284; font-size: 10px; font-weight: 650; text-transform: uppercase; letter-spacing: .07em; }
+.money-graph-page__heading h1 { margin: 6px 0 0; font-size: clamp(28px, 3.2vw, 42px); font-weight: 590; letter-spacing: -.04em; }
+.money-graph-page__heading p { margin: 10px 0 0; color: #6f7789; font-size: 11px; }
+.money-graph-diagram { overflow-x: auto; padding: 24px; border: 1px solid #e0e3ea; border-radius: 12px; background: #fff; }
+.money-graph-diagram__node circle { fill: #f8f9ff; stroke: #4a5dd2; stroke-width: 1.5px; cursor: pointer; transition: fill 160ms ease; }
+.money-graph-diagram__node:hover circle, .money-graph-diagram__node:focus circle { fill: #eef0ff; outline: none; }
+.money-graph-diagram__node-type { fill: #202537; font: 600 8px "JetBrains Mono", monospace; }
+.money-graph-diagram__node-amount { fill: #4a5dd2; font: 700 8px "JetBrains Mono", monospace; }
+.money-graph-diagram__edge-label { fill: #8a91a2; font: 8px "JetBrains Mono", monospace; }
+.money-graph-edge-list { margin-top: 18px; overflow: hidden; border-radius: 12px; border: 1px solid #e0e3ea; background: #fff; }
+.money-graph-edge-list > header { padding: 16px 20px; border-bottom: 1px solid #e4e7ed; }
+.money-graph-edge-list > header h2 { margin: 0; font-size: 15px; font-weight: 590; }
+.money-graph-edge-list > header span { display: block; margin-top: 4px; color: #737b8e; font-size: 10px; }
+
+/* Audit log */
+.audit-log-page { width: 100%; max-width: 1180px; margin: 0 auto; padding: 42px clamp(22px, 3vw, 52px) 64px; }
+.audit-log-page__heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 26px; }
+.audit-log-page__heading span { color: #6b7284; font-size: 10px; font-weight: 650; text-transform: uppercase; letter-spacing: .07em; }
+.audit-log-page__heading h1 { margin: 6px 0 0; font-size: clamp(26px, 3vw, 38px); font-weight: 590; letter-spacing: -.04em; }
+.audit-log-page__heading p { margin: 10px 0 0; max-width: 520px; color: #6f7789; font-size: 11px; }
+.audit-log-list { display: flex; flex-direction: column; gap: 1px; margin: 0; padding: 0; list-style: none; border: 1px solid #e0e3ea; border-radius: 12px; overflow: hidden; background: #e4e7ed; }
+.audit-log-list__item { display: flex; gap: 14px; padding: 16px 20px; background: #fff; }
+.audit-log-list__marker { display: grid; flex: 0 0 auto; width: 30px; height: 30px; place-items: center; border-radius: 50%; color: #4a5dd2; background: #eef0ff; }
+.audit-log-list__item--evidence_connection .audit-log-list__marker { color: #a45c08; background: #fdf2e2; }
+.audit-log-list__marker svg { width: 15px; height: 15px; }
+.audit-log-list__body { min-width: 0; flex: 1; }
+.audit-log-list__body header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.audit-log-list__body strong { font-size: 12px; font-weight: 590; }
+.audit-log-list__body time { flex: 0 0 auto; color: #8a91a2; font-size: 9px; }
+.audit-log-list__body p { margin: 6px 0 0; color: #6f7789; font-size: 10px; }
+
 @media (max-width: 1180px) {
   .hero__layout { grid-template-columns: 1fr; max-width: 850px; padding-top: 90px; }
   .hero__copy { max-width: 720px; }
