@@ -324,11 +324,13 @@ code, .money { font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monosp
 .briefing h2 { margin: 27px 0 10px; font-size: 23px; font-weight: 590; line-height: 1.15; letter-spacing: -.025em; }
 .briefing > p { margin: 0; color: #687084; font-size: 11px; line-height: 1.55; }
 .briefing ol { display: flex; flex-direction: column; margin: 24px 0 18px; padding: 0; list-style: none; }
-.briefing li { display: grid; grid-template-columns: 30px 1fr; gap: 10px; padding: 14px 0; border-top: 1px solid #e9e4ee; }
-.briefing li > span { display: grid; width: 27px; height: 27px; place-items: center; border-radius: 7px; color: #6f39ae; background: #f2eafa; font: 600 10px "JetBrains Mono", monospace; }
+.briefing li { border-top: 1px solid #e9e4ee; }
+.briefing li > button { display: grid; width: 100%; grid-template-columns: 30px 1fr; gap: 10px; padding: 14px 0; border: 0; background: transparent; text-align: left; cursor: pointer; }
+.briefing li > button > span { display: grid; width: 27px; height: 27px; place-items: center; border-radius: 7px; color: #6f39ae; background: #f2eafa; font: 600 10px "JetBrains Mono", monospace; }
 .briefing li strong { font-size: 10px; }
 .briefing li p { margin: 3px 0 0; color: #7b8292; font-size: 9px; line-height: 1.4; }
-.briefing > button { margin-top: auto; }
+.briefing > button:first-of-type { margin-top: auto; }
+.briefing__secondary { margin-top: 8px !important; color: #7b8292 !important; }
 .briefing > small { display: flex; gap: 6px; margin-top: 20px; padding-top: 14px; border-top: 1px solid #e9e4ee; color: #7b678d; font-size: 8.5px; line-height: 1.4; }
 .briefing > small svg { flex: 0 0 auto; width: 12px; height: 12px; }
 .exceptions-panel { min-width: 0; margin-top: 18px; overflow: hidden; border-radius: 12px; }
