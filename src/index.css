@@ -352,6 +352,12 @@ code, .money { font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monosp
 .case-path__alert svg { flex: 0 0 auto; width: 17px; height: 17px; }
 .case-path__alert p { display: flex; flex-direction: column; gap: 3px; margin: 0; font-size: 10px; }
 .case-path__alert strong { font-size: 11px; }
+.case-path__batched-notice { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; margin: 18px; padding: 18px; border: 1px solid #c7cdf5; border-radius: 8px; color: #333a5c; background: #f5f6ff; }
+.case-path__batched-notice svg { width: 20px; height: 20px; color: #4a5dd2; }
+.case-path__batched-notice p { display: flex; flex-direction: column; gap: 3px; margin: 0; font-size: 10px; }
+.case-path__batched-notice strong { font-size: 12px; }
+.case-path__batched-notice button { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 14px; border: 1px solid #4258cf; border-radius: 7px; color: #4258cf; background: #fff; font-size: 10px; font-weight: 650; }
+.case-path__batched-notice button svg { width: 12px; height: 12px; color: inherit; }
 .case-finding { padding-bottom: 18px; border-top: 2px solid #9d5ce1; background: linear-gradient(180deg, #fcf9ff 0, #fff 45%); }
 .case-finding > header > div { display: flex; align-items: center; gap: 8px; color: #6834a5; }
 .case-finding > header svg { width: 16px; height: 16px; }
