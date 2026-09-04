@@ -102,10 +102,16 @@ export type OverviewMetrics = {
   }>
 }
 
+const ORGANIZATION_SLUG = "ledgerlens-demo"
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...options,
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    headers: {
+      "Content-Type": "application/json",
+      "X-Organization-Slug": ORGANIZATION_SLUG,
+      ...options?.headers,
+    },
   })
   if (!response.ok) {
     throw new Error(`LedgerLens API request failed with status ${response.status}.`)
