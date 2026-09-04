@@ -39,25 +39,28 @@ Last updated: 2026-09-04
 - The matcher now follows explicit record references first and applies bounded amount/time fallback matching only to valid predecessor types. It no longer links unrelated adjacent records merely because they arrived in sequence.
 - `ReconciliationCase.expected_amount_minor`/`actual_amount_minor` now reflect whichever check actually broke first (fee, tax, settlement, or bank credit), not always the settlement totals — fixes a real UI inconsistency where fee/tax-mismatch cases showed a misleading ₹0.00 variance next to a "Needs review" status.
 - `python manage.py import_bank_statement <csv> --organization-slug=... --source-name=... --batch-reference=... [--reconcile-entity=...]` — the first real source adapter. Parses a bank statement CSV into the same record shape the ingestion service already accepts, so it shares the tested path rather than a parallel one. Replay-safe and partial-batch-safe (verified against a live import: good rows import, bad rows reject with a reason, a second run of the same batch reference is a no-op).
-- Backend coverage is now 27 tests, including ingestion replay/conflict/rejection behavior, reconciliation preconditions, guards against unrelated or ambiguous evidence, the fee-variance regression, and the bank-statement adapter (parser unit tests + a command integration test that resolves a real `bank_credit_delayed` seeded case to `matched`).
+- `ReconciliationEngine` now supports batched settlements: one or more payment records per case instead of exactly one. Each payment's fee/tax is matched to that specific payment (not just "the first fee in the trace"), expected fees/taxes are summed across all payments, and per-payment checks get a disambiguating suffix when there is more than one payment. Single-payment cases are byte-identical to before (same check names, same math) — verified with the full existing test suite plus a browser check of a live single-payment case.
+- `EvidenceMatcher` now recognizes a settlement's `raw_payload["contributing_references"]` list, so a batched settlement fed by multiple payment chains gets one evidence edge per contributing chain — a real converging graph, not a chain that only captures the last contributor. Verified with an explicit edge-set assertion in `test_engine_batches_two_payments_into_one_settlement`.
+- Case-detail page: the "Transaction path" timeline now detects a batched case (more than one payment) and shows a notice pointing at the Money Graph page instead of rendering a broken linear list; ordinary single-payment cases are unchanged (verified in the browser). The underlying `pathRecords` also now deduplicates by record id instead of assuming a strict single chain.
+- Backend coverage is now 28 tests, including ingestion replay/conflict/rejection behavior, reconciliation preconditions, guards against unrelated or ambiguous evidence, the fee-variance regression, the bank-statement adapter, and the batched-settlement engine/matcher behavior.
 
 ## Not yet implemented
 
 - Production PostgreSQL configuration and database deployment.
 - Live webhook endpoints and accounting-export adapters (bank CSV import is now real; other source types still seed-only).
-- Full one-to-many batched-settlement and ambiguous-match resolution beyond the seeded graph.
+- Ambiguous-match resolution beyond the seeded graph (batched settlement matching itself is now implemented).
 - Prompt version records, provider cost accounting, retry policy, and a model evaluation corpus.
 - Authentication, RBAC, encryption, retention, audit persistence, and production observability.
 - Cross-case AI Investigator, Connections, and Rule Studio pages (Money Graph and Audit Log are done; these three remain inert by design, labeled "planned").
 - A persisted case-status-change event log — Audit Log currently derives its feed from `AgentRun` and `EvidenceConnection` timestamps only, not discrete status-transition events (case.status is visible on the case page itself; adding a dedicated activity model was deferred as unnecessary for now).
-- Batched settlements (open decision D4 — many payments to one settlement) — the matcher currently selects one valid predecessor for each destination record.
+- No seeded demo scenario currently exercises batched settlement (all six seeded cases are single-payment); the capability is implemented and tested but not yet visible in the default demo data.
 - Demo recording and concept-doc trim (Phase 9); the README and architecture diagram already exist.
 - A raw/normalized provenance table split — deliberately skipped; see `plan.md` for the rationale (the current single-table design already gives the same immutability guarantee, tested).
 
 ## Next milestone: strengthen the backend architecture
 
 1. ~~Route the first real bank CSV adapter through the ingestion service.~~ Done.
-2. Support many-payments-to-one-settlement matching and reconciliation.
+2. ~~Support many-payments-to-one-settlement matching and reconciliation.~~ Done.
 3. Add organization-scoped authentication and authorization to every API queryset and write endpoint.
 4. Add persisted reconciliation-run and case-status activity events.
 5. Move realistic pilots to PostgreSQL with background ingestion, retries, rate limits, secret management, and observability.
