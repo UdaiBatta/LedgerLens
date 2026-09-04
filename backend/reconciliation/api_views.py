@@ -2,6 +2,7 @@ from django.core.exceptions import ValidationError
 from django.db.models import Count, Q, Sum
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import NotFound, ValidationError as DRFValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -29,12 +30,30 @@ from .serializers import (
     ReconciliationCaseListSerializer,
 )
 
+ORGANIZATION_HEADER = "HTTP_X_ORGANIZATION_SLUG"
+
+
+def require_organization(request) -> Organization:
+    """Resolve the requesting organization from the X-Organization-Slug header.
+
+    Every view scopes its queryset through this so one organization's financial
+    data, cases, and audit history can never appear in another's response.
+    """
+    slug = request.META.get(ORGANIZATION_HEADER, "").strip()
+    if not slug:
+        raise DRFValidationError({"organization": "The X-Organization-Slug header is required."})
+    try:
+        return Organization.objects.get(slug=slug)
+    except Organization.DoesNotExist as error:
+        raise NotFound({"organization": "No organization matches the given slug."}) from error
+
 
 class ReconciliationCaseViewSet(viewsets.ReadOnlyModelViewSet):
     lookup_field = "public_id"
 
     def get_queryset(self):
-        queryset = ReconciliationCase.objects.select_related(
+        organization = require_organization(self.request)
+        queryset = ReconciliationCase.objects.filter(organization=organization).select_related(
             "organization",
             "first_break_record__source",
         ).prefetch_related(
@@ -105,23 +124,32 @@ class ReconciliationCaseViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class FinancialRecordViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = FinancialRecord.objects.select_related("source", "source__organization")
     serializer_class = FinancialRecordSerializer
+
+    def get_queryset(self):
+        organization = require_organization(self.request)
+        return FinancialRecord.objects.filter(source__organization=organization).select_related(
+            "source", "source__organization"
+        )
 
 
 class OverviewMetricsView(APIView):
     def get(self, request):
-        captured = FinancialRecord.objects.filter(
+        organization = require_organization(request)
+        organization_records = FinancialRecord.objects.filter(source__organization=organization)
+        organization_cases = ReconciliationCase.objects.filter(organization=organization)
+
+        captured = organization_records.filter(
             record_type=FinancialRecordType.PAYMENT
         ).aggregate(total=Sum("amount_minor"))["total"] or 0
-        case_counts = ReconciliationCase.objects.aggregate(
+        case_counts = organization_cases.aggregate(
             total=Count("id"),
             matched=Count("id", filter=Q(status=ReconciliationStatus.MATCHED)),
             open=Count("id", filter=~Q(status=ReconciliationStatus.MATCHED)),
         )
         unexplained = sum(
             abs(reconciliation_case.difference_minor)
-            for reconciliation_case in ReconciliationCase.objects.exclude(
+            for reconciliation_case in organization_cases.exclude(
                 status=ReconciliationStatus.MATCHED
             )
         )
@@ -135,7 +163,7 @@ class OverviewMetricsView(APIView):
             FinancialRecordType.BANK_CREDIT,
             FinancialRecordType.LEDGER_ENTRY,
         ):
-            summary = FinancialRecord.objects.filter(record_type=record_type).aggregate(
+            summary = organization_records.filter(record_type=record_type).aggregate(
                 count=Count("id"),
                 amount_minor=Sum("amount_minor"),
             )
@@ -161,6 +189,7 @@ class OverviewMetricsView(APIView):
 
 class AuditLogView(APIView):
     def get(self, request):
+        organization = require_organization(request)
         agent_run_entries = [
             {
                 "event_type": "agent_run",
@@ -176,7 +205,9 @@ class AuditLogView(APIView):
                     "evidence_cited": agent_run.evidence_cited,
                 },
             }
-            for agent_run in AgentRun.objects.select_related("reconciliation_case")
+            for agent_run in AgentRun.objects.filter(
+                reconciliation_case__organization=organization
+            ).select_related("reconciliation_case")
         ]
         evidence_connection_entries = [
             {
@@ -196,7 +227,9 @@ class AuditLogView(APIView):
                     "is_verified": evidence_connection.is_verified,
                 },
             }
-            for evidence_connection in EvidenceConnection.objects.select_related(
+            for evidence_connection in EvidenceConnection.objects.filter(
+                reconciliation_case__organization=organization
+            ).select_related(
                 "reconciliation_case", "source_record", "destination_record"
             )
         ]
@@ -210,10 +243,23 @@ class AuditLogView(APIView):
 
 class IngestionBatchView(APIView):
     def get(self, request):
-        batches = IngestionBatch.objects.select_related("source", "source__organization")[:100]
+        organization = require_organization(request)
+        batches = IngestionBatch.objects.filter(source__organization=organization).select_related(
+            "source", "source__organization"
+        )[:100]
         return Response(IngestionBatchSerializer(batches, many=True).data)
 
     def post(self, request):
+        # Ingestion is the onboarding boundary, so it may create a new organization on first
+        # use — unlike every other view, which only ever reads an organization that already
+        # exists. require_organization is intentionally not used here for that reason; the
+        # organization_slug/header match check below provides the equivalent safety guarantee.
+        requested_slug = str(request.META.get(ORGANIZATION_HEADER, "")).strip()
+        if not requested_slug:
+            return Response(
+                {"organization": "The X-Organization-Slug header is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         payload = request.data
         required_fields = (
             "organization_slug",
@@ -254,9 +300,14 @@ class IngestionBatchView(APIView):
                 {"source_type": "Unsupported financial source type."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        if str(payload["organization_slug"]).strip() != requested_slug:
+            return Response(
+                {"organization": "The X-Organization-Slug header must match organization_slug."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         organization, _ = Organization.objects.get_or_create(
-            slug=str(payload["organization_slug"]).strip(),
+            slug=requested_slug,
             defaults={"name": str(payload["organization_name"]).strip()},
         )
         source, source_created = FinancialDataSource.objects.get_or_create(

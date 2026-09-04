@@ -179,6 +179,9 @@ class DemoReconciliationFlowTests(TestCase):
     def setUpTestData(cls) -> None:
         call_command("seed_demo_cases", verbosity=0)
 
+    def setUp(self) -> None:
+        self.client.defaults["HTTP_X_ORGANIZATION_SLUG"] = "ledgerlens-demo"
+
     def test_seed_is_idempotent_and_builds_all_scenarios(self) -> None:
         original_record_count = FinancialRecord.objects.count()
         call_command("seed_demo_cases", verbosity=0)
@@ -303,6 +306,45 @@ class DemoReconciliationFlowTests(TestCase):
 
         self.assertNotIn("from .agent", engine_source)
         self.assertNotIn("import agent", engine_source)
+
+    def test_every_endpoint_requires_the_organization_header(self) -> None:
+        reconciliation_case = ReconciliationCase.objects.get(case_reference="EXC-2025-05-000150")
+        self.client.defaults.pop("HTTP_X_ORGANIZATION_SLUG", None)
+
+        for response in (
+            self.client.get("/api/cases/"),
+            self.client.get(f"/api/cases/{reconciliation_case.public_id}/"),
+            self.client.get("/api/metrics/overview/"),
+            self.client.get("/api/audit-log/"),
+            self.client.get("/api/records/"),
+            self.client.get("/api/ingestion/batches/"),
+        ):
+            self.assertEqual(response.status_code, 400)
+
+    def test_organizations_cannot_see_each_other_s_data(self) -> None:
+        reconciliation_case = ReconciliationCase.objects.get(case_reference="EXC-2025-05-000150")
+        Organization.objects.create(name="Other Company", slug="other-company")
+
+        list_response = self.client.get(
+            "/api/cases/", HTTP_X_ORGANIZATION_SLUG="other-company"
+        )
+        detail_response = self.client.get(
+            f"/api/cases/{reconciliation_case.public_id}/",
+            HTTP_X_ORGANIZATION_SLUG="other-company",
+        )
+        metrics_response = self.client.get(
+            "/api/metrics/overview/", HTTP_X_ORGANIZATION_SLUG="other-company"
+        )
+        unknown_org_response = self.client.get(
+            "/api/cases/", HTTP_X_ORGANIZATION_SLUG="does-not-exist"
+        )
+
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(list_response.json(), [])
+        self.assertEqual(detail_response.status_code, 404)
+        self.assertEqual(metrics_response.status_code, 200)
+        self.assertEqual(metrics_response.json()["case_count"], 0)
+        self.assertEqual(unknown_org_response.status_code, 404)
 
     def test_engine_requires_at_least_one_payment(self) -> None:
         reconciliation_case = ReconciliationCase.objects.get(
@@ -441,6 +483,7 @@ class InvestigationAgentValidationTests(TestCase):
 
 class FinancialRecordIngestionApiTests(TestCase):
     def setUp(self) -> None:
+        self.client.defaults["HTTP_X_ORGANIZATION_SLUG"] = "api-demo"
         self.payload = {
             "organization_slug": "api-demo",
             "organization_name": "API Demo",
