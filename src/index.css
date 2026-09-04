@@ -54,8 +54,8 @@
 }
 
 * { box-sizing: border-box; }
-html { max-width: 100%; overflow-x: hidden; scroll-behavior: smooth; }
-body { margin: 0; min-width: 0; max-width: 100%; min-height: 100vh; overflow-x: hidden; background: var(--background); }
+html { max-width: 100%; overflow-x: clip; scroll-behavior: smooth; }
+body { margin: 0; min-width: 0; max-width: 100%; min-height: 100vh; overflow-x: clip; background: var(--background); }
 button, input { font: inherit; }
 button:not(:disabled), [role="button"]:not(:disabled), a { cursor: pointer; }
 button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid color-mix(in srgb, var(--ring) 55%, transparent); outline-offset: 2px; }
