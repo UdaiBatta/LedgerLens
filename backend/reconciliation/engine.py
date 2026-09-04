@@ -67,7 +67,7 @@ class ReconciliationEngine:
         expected_settlement = captured_amount - refunds - expected_fee - expected_tax
         actual_amount = bank_credit.amount_minor if bank_credit else 0
 
-        first_break, exception_type, status = self._classify(
+        first_break, exception_type, status, first_break_expected, first_break_actual = self._classify(
             payment,
             fee,
             tax,
@@ -76,6 +76,7 @@ class ReconciliationEngine:
             expected_fee,
             expected_tax,
             expected_settlement,
+            actual_amount,
         )
 
         reconciliation_case, _ = ReconciliationCase.objects.update_or_create(
@@ -86,8 +87,8 @@ class ReconciliationEngine:
                 "exception_type": exception_type,
                 "status": status,
                 "currency": payment.currency if payment else "INR",
-                "expected_amount_minor": expected_settlement,
-                "actual_amount_minor": actual_amount,
+                "expected_amount_minor": first_break_expected,
+                "actual_amount_minor": first_break_actual,
                 "first_break_record": first_break,
             },
         )
@@ -126,17 +127,24 @@ class ReconciliationEngine:
         expected_fee,
         expected_tax,
         expected_settlement,
+        actual_bank_amount,
     ):
         if fee and fee.amount_minor != expected_fee:
-            return fee, "fee_mismatch", ReconciliationStatus.NEEDS_REVIEW
+            return fee, "fee_mismatch", ReconciliationStatus.NEEDS_REVIEW, expected_fee, fee.amount_minor
         if tax and tax.amount_minor != expected_tax:
-            return tax, "tax_mismatch", ReconciliationStatus.NEEDS_REVIEW
+            return tax, "tax_mismatch", ReconciliationStatus.NEEDS_REVIEW, expected_tax, tax.amount_minor
         if not settlement:
-            return payment, "settlement_missing", ReconciliationStatus.NEEDS_REVIEW
+            return payment, "settlement_missing", ReconciliationStatus.NEEDS_REVIEW, expected_settlement, 0
         if settlement.amount_minor != expected_settlement:
-            return settlement, "settlement_mismatch", ReconciliationStatus.NEEDS_REVIEW
+            return (
+                settlement,
+                "settlement_mismatch",
+                ReconciliationStatus.NEEDS_REVIEW,
+                expected_settlement,
+                settlement.amount_minor,
+            )
         if not bank_credit:
-            return settlement, "bank_credit_delayed", ReconciliationStatus.NEEDS_REVIEW
+            return settlement, "bank_credit_delayed", ReconciliationStatus.NEEDS_REVIEW, expected_settlement, 0
         if bank_credit.amount_minor != settlement.amount_minor:
             has_explanation = bool(bank_credit.raw_payload.get("adjustment_note"))
             status = (
@@ -144,8 +152,14 @@ class ReconciliationEngine:
                 if has_explanation
                 else ReconciliationStatus.INSUFFICIENT_EVIDENCE
             )
-            return bank_credit, "settlement_short", status
-        return None, "clean_match", ReconciliationStatus.MATCHED
+            return (
+                bank_credit,
+                "settlement_short",
+                status,
+                settlement.amount_minor,
+                actual_bank_amount,
+            )
+        return None, "clean_match", ReconciliationStatus.MATCHED, expected_settlement, actual_bank_amount
 
     def _run_checks(
         self,

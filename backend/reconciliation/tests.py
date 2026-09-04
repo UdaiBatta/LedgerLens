@@ -198,6 +198,17 @@ class DemoReconciliationFlowTests(TestCase):
         )
         self.assertEqual(reconciliation_case.check_results.count(), 7)
 
+    def test_fee_mismatch_case_reports_the_fee_variance_not_the_settlement_variance(self) -> None:
+        reconciliation_case = ReconciliationCase.objects.get(
+            case_reference="EXC-2025-05-000142"
+        )
+
+        self.assertEqual(reconciliation_case.exception_type, "fee_mismatch")
+        self.assertEqual(reconciliation_case.first_break_record.record_type, FinancialRecordType.FEE)
+        self.assertEqual(reconciliation_case.expected_amount_minor, 30_000)
+        self.assertEqual(reconciliation_case.actual_amount_minor, 35_000)
+        self.assertEqual(reconciliation_case.difference_minor, 5_000)
+
     def test_every_seeded_scenario_has_the_expected_outcome(self) -> None:
         expected_outcomes = {
             "EXC-2025-05-000150": ("clean_match", ReconciliationStatus.MATCHED),
