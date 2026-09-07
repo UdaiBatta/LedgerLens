@@ -23,6 +23,7 @@ export type ReconciliationCaseSummary = {
   expected_amount_minor: number
   actual_amount_minor: number
   difference_minor: number
+  amounts_known: boolean
   owner: string
   opened_at: string
 }
@@ -79,7 +80,7 @@ export type EvidenceGraph = {
 }
 
 export type AuditLogEntry = {
-  event_type: "agent_run" | "evidence_connection"
+  event_type: string
   occurred_at: string
   case_reference: string
   case_public_id: string
@@ -89,6 +90,9 @@ export type AuditLogEntry = {
 }
 
 export type OverviewMetrics = {
+  currency: string
+  source_count: number
+  fresh_source_count: number
   captured_amount_minor: number
   case_count: number
   matched_case_count: number
@@ -102,18 +106,21 @@ export type OverviewMetrics = {
   }>
 }
 
-const ORGANIZATION_SLUG = "ledgerlens-demo"
+const ORGANIZATION_SLUG = import.meta.env.VITE_ORGANIZATION_SLUG || "ledgerlens-demo"
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const csrfToken = document.cookie.split("; ").find((cookie) => cookie.startsWith("csrftoken="))?.slice(10)
   const response = await fetch(path, {
     ...options,
     headers: {
       "Content-Type": "application/json",
       "X-Organization-Slug": ORGANIZATION_SLUG,
+      ...(csrfToken ? { "X-CSRFToken": decodeURIComponent(csrfToken) } : {}),
       ...options?.headers,
     },
   })
   if (!response.ok) {
+    if (response.status === 401) throw new Error("Sign in through /api/auth/login/ or enable the local demo explicitly.")
     throw new Error(`LedgerLens API request failed with status ${response.status}.`)
   }
   return response.json() as Promise<T>
@@ -135,10 +142,10 @@ export function getRecord(recordId: number) {
   return request<FinancialRecord>(`/api/records/${recordId}/`)
 }
 
-export function assignCase(publicId: string, owner: string) {
+export function assignCase(publicId: string) {
   return request<ReconciliationCaseDetail>(`/api/cases/${publicId}/assign/`, {
     method: "POST",
-    body: JSON.stringify({ owner }),
+    body: JSON.stringify({}),
   })
 }
 
@@ -155,4 +162,8 @@ export function getEvidenceGraph(publicId: string) {
 
 export function getAuditLog() {
   return request<AuditLogEntry[]>("/api/audit-log/")
+}
+
+export function getIdentity() {
+  return request<{ organization: string; name: string; role: string }>("/api/identity/")
 }
