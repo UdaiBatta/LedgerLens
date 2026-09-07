@@ -43,6 +43,8 @@ class Command(BaseCommand):
             name=options["source_name"],
             defaults={"source_type": FinancialSourceType.BANK_ACCOUNT},
         )
+        if source.source_type != FinancialSourceType.BANK_ACCOUNT:
+            raise CommandError("The chosen source is not a bank account.")
 
         try:
             result = FinancialRecordIngestionService().ingest(

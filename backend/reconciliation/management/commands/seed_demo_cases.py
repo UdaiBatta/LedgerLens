@@ -13,6 +13,7 @@ from reconciliation.models import (
     FinancialRecordType,
     FinancialSourceType,
     Organization,
+    ReconciliationRuleVersion,
 )
 
 
@@ -68,6 +69,10 @@ class Command(BaseCommand):
             defaults={"name": "LedgerLens Demo"},
         )
         sources = self._get_sources(organization)
+        ReconciliationRuleVersion.objects.get_or_create(source=sources["gateway"], version="demo-2025-v1", defaults={
+            "currency": "INR", "effective_from": datetime(2020, 1, 1, tzinfo=timezone.utc),
+            "fee_basis_points": 120, "tax_basis_points": 1800,
+        })
         base_time = datetime(2025, 5, 15, 10, 21, tzinfo=timezone.utc)
 
         for index, scenario in enumerate(DEMO_SCENARIOS):
@@ -144,6 +149,8 @@ class Command(BaseCommand):
         previous_reference = ""
         for sequence, (source_key, record_type, external_id, record_amount) in enumerate(definitions):
             linked_reference = previous_reference
+            if record_type == FinancialRecordType.REFUND:
+                linked_reference = f"PAY-{case_reference[-6:]}"
             if record_type == FinancialRecordType.BANK_CREDIT and scenario.get("fuzzy_bank_link"):
                 linked_reference = ""
             payload = {

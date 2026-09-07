@@ -1,182 +1,68 @@
+from django.core.exceptions import ValidationError
 from decimal import Decimal
-
 from django.db import transaction
 
-from .models import EvidenceConnection, EvidenceMatchMethod, FinancialRecord, ReconciliationCase
+from .models import EvidenceConnection, EvidenceMatchMethod
 
 
 class EvidenceMatcher:
-    fuzzy_time_window_seconds = 3 * 24 * 60 * 60
-    minimum_amount_tolerance_minor = 1_000
     predecessor_types = {
-        "payment": {"order"},
-        "fee": {"payment"},
-        "tax": {"fee"},
-        "refund": {"payment"},
-        "settlement": {"payment", "fee", "tax", "refund"},
-        "bank_credit": {"settlement"},
-        "ledger_entry": {"bank_credit"},
+        "payment": {"order"}, "fee": {"payment"}, "tax": {"fee"},
+        "refund": {"payment"}, "settlement": {"payment", "fee", "tax", "refund"},
+        "bank_credit": {"settlement"}, "ledger_entry": {"bank_credit"},
     }
 
+    def decisions(self, records, tolerance_minor=0, window_seconds=259200):
+        """Candidates are review evidence, never authoritative matching decisions."""
+        decisions = []
+        for destination in records:
+            allowed = [r for r in records if r.pk != destination.pk
+                       and r.source.organization_id == destination.source.organization_id
+                       and r.entity_id == destination.entity_id
+                       and r.currency == destination.currency
+                       and r.record_type in self.predecessor_types.get(destination.record_type, set())]
+            references = destination.raw_payload.get("contributing_references", [])
+            if not isinstance(references, list) or not all(isinstance(ref, str) for ref in references):
+                raise ValidationError("contributing_references must be a list of record identifiers.")
+            references = list(dict.fromkeys(references + [destination.reference or destination.raw_payload.get("linked_reference", "")]))
+            explicit = [r for r in allowed if r.external_record_id in references]
+            ambiguous_reference = any(sum(r.external_record_id == ref for r in explicit) > 1 for ref in references if ref)
+            if explicit:
+                candidates = explicit
+                state = "ambiguous" if ambiguous_reference else "confirmed"
+                method = EvidenceMatchMethod.EXACT_REFERENCE
+            else:
+                candidates = [r for r in allowed
+                              if abs(r.amount_minor - destination.amount_minor) <= tolerance_minor
+                              and abs((r.occurred_at - destination.occurred_at).total_seconds()) <= window_seconds]
+                state = "ambiguous" if len(candidates) > 1 else "candidate" if candidates else "missing"
+                method = EvidenceMatchMethod.AMOUNT_AND_TIME
+            if destination.record_type == "order":
+                continue
+            decisions.append({"destination_id": destination.pk, "state": state,
+                              "candidate_ids": [r.pk for r in candidates], "method": method,
+                              "matched_fields": ["reference"] if explicit else ["amount_minor", "occurred_at"],
+                              "tolerance_minor": tolerance_minor, "window_seconds": window_seconds})
+        return decisions
+
     @transaction.atomic
-    def build_connections(
-        self,
-        reconciliation_case: ReconciliationCase,
-        records: list[FinancialRecord],
-    ) -> list[EvidenceConnection]:
+    def build_connections(self, reconciliation_case, records, decisions=None):
+        if any(r.source.organization_id != reconciliation_case.organization_id for r in records):
+            raise ValidationError("Evidence must belong to the case organization.")
+        decisions = decisions if decisions is not None else self.decisions(records)
+        by_id = {r.pk: r for r in records}
+        # Latest projection only; immutable reconciliation runs retain earlier decisions.
         reconciliation_case.evidence_connections.all().delete()
         connections = []
-
-        ordered_records = sorted(records, key=lambda record: (record.occurred_at, record.id))
-        records_by_external_id = {
-            record.external_record_id: record for record in ordered_records
-        }
-        matched_pairs = []
-        for destination_index, destination_record in enumerate(ordered_records[1:], start=1):
-            prior_records = ordered_records[:destination_index]
-            linked_reference = (
-                destination_record.reference
-                or destination_record.raw_payload.get("linked_reference", "")
-            )
-            source_record = records_by_external_id.get(linked_reference)
-            if source_record not in prior_records:
-                source_record = None
-            if not source_record:
-                source_record = self._closest_allowed_predecessor(
-                    prior_records,
-                    destination_record,
-                )
-            if source_record:
-                matched_pairs.append((source_record, destination_record))
-
-        # A settlement can be fed by more than one payment chain (batched settlement),
-        # so every prior record that explicitly names the settlement also links to it,
-        # not only the single closest predecessor found above.
-        matched_pairs += self._additional_explicit_references_into_settlements(
-            ordered_records,
-            matched_pairs,
-        )
-
-        for sequence_number, (source_record, destination_record) in enumerate(
-            matched_pairs,
-            start=1,
-        ):
-            method, confidence, rationale = self._match(source_record, destination_record)
-            connections.append(
-                EvidenceConnection.objects.create(
+        for decision in decisions:
+            for source_id in decision["candidate_ids"]:
+                confirmed = decision["state"] == "confirmed"
+                connections.append(EvidenceConnection.objects.create(
                     reconciliation_case=reconciliation_case,
-                    source_record=source_record,
-                    destination_record=destination_record,
-                    sequence_number=sequence_number,
-                    match_method=method,
-                    confidence=confidence,
-                    matching_reason=rationale["summary"],
-                    rationale=rationale,
-                    is_verified=confidence == Decimal("1.0000"),
-                )
-            )
-
+                    source_record=by_id[source_id], destination_record=by_id[decision["destination_id"]],
+                    sequence_number=len(connections) + 1, match_method=decision["method"],
+                    confidence=Decimal("1.0000") if confirmed else Decimal("0.7500"),
+                    matching_reason="Explicit reference." if confirmed else "Candidate requires human verification.",
+                    rationale=decision, is_verified=confirmed,
+                ))
         return connections
-
-    def _additional_explicit_references_into_settlements(self, ordered_records, matched_pairs):
-        """A batched settlement can list more than one contributing record's external id in
-        raw_payload["contributing_references"], since FinancialRecord.reference only holds one
-        value and the primary chain link already uses it for the closest predecessor."""
-        already_linked = {(source.id, destination.id) for source, destination in matched_pairs}
-        records_by_external_id = {record.external_record_id: record for record in ordered_records}
-        settlements = [
-            record for record in ordered_records if record.record_type == "settlement"
-        ]
-        extra_pairs = []
-        for settlement in settlements:
-            contributing_references = settlement.raw_payload.get("contributing_references", [])
-            for external_id in contributing_references:
-                contributor = records_by_external_id.get(external_id)
-                if contributor and (contributor.id, settlement.id) not in already_linked:
-                    extra_pairs.append((contributor, settlement))
-                    already_linked.add((contributor.id, settlement.id))
-        return extra_pairs
-
-    def _closest_allowed_predecessor(self, candidates, destination_record):
-        allowed_types = self.predecessor_types.get(destination_record.record_type, set())
-        eligible_candidates = []
-        for candidate in candidates:
-            time_difference = abs(destination_record.occurred_at - candidate.occurred_at)
-            amount_difference = abs(destination_record.amount_minor - candidate.amount_minor)
-            amount_tolerance = max(
-                self.minimum_amount_tolerance_minor,
-                destination_record.amount_minor * 2 // 100,
-            )
-            if (
-                candidate.record_type in allowed_types
-                and candidate.currency == destination_record.currency
-                and time_difference.total_seconds() <= self.fuzzy_time_window_seconds
-                and amount_difference <= amount_tolerance
-            ):
-                eligible_candidates.append(
-                    (amount_difference, time_difference, candidate.id, candidate)
-                )
-        if not eligible_candidates:
-            return None
-        return min(eligible_candidates, key=lambda match: match[:3])[3]
-
-    def _match(
-        self,
-        source_record: FinancialRecord,
-        destination_record: FinancialRecord,
-    ) -> tuple[str, Decimal, dict]:
-        linked_reference = (
-            destination_record.reference
-            or destination_record.raw_payload.get("linked_reference")
-        )
-        if linked_reference == source_record.external_record_id:
-            return (
-                EvidenceMatchMethod.EXACT_REFERENCE,
-                Decimal("1.0000"),
-                {
-                    "summary": "The destination record contains the source record identifier.",
-                    "matched_fields": ["linked_reference"],
-                    "tolerance_minor": 0,
-                },
-            )
-
-        contributing_references = destination_record.raw_payload.get("contributing_references", [])
-        if source_record.external_record_id in contributing_references:
-            return (
-                EvidenceMatchMethod.EXACT_REFERENCE,
-                Decimal("1.0000"),
-                {
-                    "summary": "The settlement explicitly lists the source record as a contributor.",
-                    "matched_fields": ["contributing_references"],
-                    "tolerance_minor": 0,
-                },
-            )
-
-        if source_record.reference and source_record.reference == destination_record.reference:
-            return (
-                EvidenceMatchMethod.SOURCE_REFERENCE,
-                Decimal("0.9500"),
-                {
-                    "summary": "Both records contain the same financial reference.",
-                    "matched_fields": ["reference"],
-                    "tolerance_minor": 0,
-                },
-            )
-
-        time_difference = abs(destination_record.occurred_at - source_record.occurred_at)
-        amount_difference = abs(destination_record.amount_minor - source_record.amount_minor)
-        return (
-            EvidenceMatchMethod.AMOUNT_AND_TIME,
-            Decimal("0.7500"),
-            {
-                "summary": "The records were linked by amount and occurrence window.",
-                "matched_fields": ["amount_minor", "occurred_at"],
-                "amount_difference_minor": amount_difference,
-                "time_difference_seconds": int(time_difference.total_seconds()),
-                "amount_tolerance_minor": max(
-                    self.minimum_amount_tolerance_minor,
-                    destination_record.amount_minor * 2 // 100,
-                ),
-                "time_window_seconds": self.fuzzy_time_window_seconds,
-            },
-        )
