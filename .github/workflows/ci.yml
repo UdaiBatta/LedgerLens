@@ -31,4 +31,37 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r requirements.txt
+      - run: python manage.py check
+      - run: python manage.py makemigrations --check --dry-run
+      - run: python manage.py test
+
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: ledgerlens
+          POSTGRES_USER: ledgerlens
+          POSTGRES_PASSWORD: ci-only-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ledgerlens"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      POSTGRES_DB: ledgerlens
+      POSTGRES_USER: ledgerlens
+      POSTGRES_PASSWORD: ci-only-password
+      POSTGRES_HOST: localhost
+      POSTGRES_SSLMODE: disable
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements.txt
+      - run: python manage.py migrate --noinput
       - run: python manage.py test

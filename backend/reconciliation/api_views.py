@@ -1,29 +1,32 @@
 from django.core.exceptions import ValidationError
-from django.db.models import Count, Q, Sum
+from django.db import transaction
+from django.db.models import Count, Q, Sum, Max
+from django.utils import timezone
+from datetime import timedelta
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import NotFound, ValidationError as DRFValidationError
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .agent import InvestigationAgent
+from .access import require_organization
 from .engine import ReconciliationEngine
 from .ingestion import FinancialRecordIngestionService
 from .models import (
     AgentRun,
-    EvidenceConnection,
+    AuditEvent,
+    ReconciliationRuleVersion,
     FinancialDataSource,
     FinancialRecord,
     FinancialRecordType,
     FinancialSourceType,
     IngestionBatch,
-    Organization,
     ReconciliationCase,
     ReconciliationStatus,
 )
 from .serializers import (
     AgentRunSerializer,
-    AuditLogEntrySerializer,
     FinancialRecordSerializer,
     IngestionBatchSerializer,
     ReconciliationCaseDetailSerializer,
@@ -31,21 +34,6 @@ from .serializers import (
 )
 
 ORGANIZATION_HEADER = "HTTP_X_ORGANIZATION_SLUG"
-
-
-def require_organization(request) -> Organization:
-    """Resolve the requesting organization from the X-Organization-Slug header.
-
-    Every view scopes its queryset through this so one organization's financial
-    data, cases, and audit history can never appear in another's response.
-    """
-    slug = request.META.get(ORGANIZATION_HEADER, "").strip()
-    if not slug:
-        raise DRFValidationError({"organization": "The X-Organization-Slug header is required."})
-    try:
-        return Organization.objects.get(slug=slug)
-    except Organization.DoesNotExist as error:
-        raise NotFound({"organization": "No organization matches the given slug."}) from error
 
 
 class ReconciliationCaseViewSet(viewsets.ReadOnlyModelViewSet):
@@ -75,6 +63,9 @@ class ReconciliationCaseViewSet(viewsets.ReadOnlyModelViewSet):
         reconciliation_case = self.get_object()
         connections = reconciliation_case.evidence_connections.all()
         records = {}
+        latest = reconciliation_case.reconciliation_runs.first()
+        if latest:
+            records = {r.pk: r for r in FinancialRecord.objects.filter(pk__in=[item["id"] for item in latest.inputs]).select_related("source")}
         edges = []
         for connection in connections:
             records[connection.source_record_id] = connection.source_record
@@ -98,24 +89,54 @@ class ReconciliationCaseViewSet(viewsets.ReadOnlyModelViewSet):
         )
 
     @action(detail=True, methods=["post"])
+    @transaction.atomic
     def assign(self, request, public_id=None):
         reconciliation_case = self.get_object()
-        owner = str(request.data.get("owner", "Demo Operator")).strip()
-        if not owner:
-            return Response({"owner": "This field is required."}, status=status.HTTP_400_BAD_REQUEST)
+        actor = request.user if request.user.is_authenticated else None
+        owner = actor.get_full_name() or actor.get_username() if actor else "Demo Operator"
+        before = {"owner": reconciliation_case.owner, "assigned_to_id": reconciliation_case.assigned_to_id}
+        reconciliation_case.assigned_to = actor
         reconciliation_case.owner = owner
-        reconciliation_case.save(update_fields=["owner", "updated_at"])
+        reconciliation_case.workflow_status = "investigating"
+        reconciliation_case.save(update_fields=["owner", "assigned_to", "workflow_status", "updated_at"])
+        AuditEvent.objects.create(organization=reconciliation_case.organization, reconciliation_case=reconciliation_case,
+                                  actor=actor, event_type="case_assigned", before=before,
+                                  after={"owner": owner, "assigned_to_id": reconciliation_case.assigned_to_id})
         return Response(ReconciliationCaseDetailSerializer(reconciliation_case).data)
+
+    @action(detail=True, methods=["get"], url_path="reconciliation-runs")
+    def reconciliation_runs(self, request, public_id=None):
+        return Response(list(self.get_object().reconciliation_runs.values()[:100]))
+
+    @action(detail=True, methods=["post"], url_path="workflow")
+    @transaction.atomic
+    def workflow(self, request, public_id=None):
+        case = self.get_object()
+        if not isinstance(request.data, dict):
+            raise DRFValidationError("Provide a JSON object.")
+        workflow = request.data.get("status")
+        reason = str(request.data.get("reason", "")).strip()
+        allowed = {"investigating", "waiting_for_source", "waiting_for_bank", "resolved", "accepted_variance", "false_positive"}
+        if workflow not in allowed or not reason:
+            raise DRFValidationError("Provide a supported workflow status and a reason.")
+        if workflow in {"resolved", "accepted_variance", "false_positive"} and request.membership.role not in {"manager", "administrator"}:
+            return Response({"detail": "A manager must close a case."}, status=403)
+        before = {"workflow_status": case.workflow_status}
+        case.workflow_status = workflow
+        case.save(update_fields=["workflow_status", "updated_at"])
+        AuditEvent.objects.create(organization=case.organization, reconciliation_case=case, actor=request.user,
+                                  event_type="status_changed", before=before, after={"workflow_status": workflow}, reason=reason[:2000])
+        return Response(ReconciliationCaseDetailSerializer(case).data)
 
     @action(detail=True, methods=["post"])
     def ask(self, request, public_id=None):
-        question = str(request.data.get("question", "")).strip()
-        if not question:
+        question = request.data.get("question") if isinstance(request.data, dict) else None
+        if not isinstance(question, str) or not 1 <= len(question.strip()) <= 2000:
             return Response(
-                {"question": "This field is required."},
+                {"question": "Provide 1 to 2000 characters."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        agent_run = InvestigationAgent().answer(self.get_object(), question)
+        agent_run = InvestigationAgent().answer(self.get_object(), question.strip())
         return Response(AgentRunSerializer(agent_run).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["get"])
@@ -136,8 +157,9 @@ class FinancialRecordViewSet(viewsets.ReadOnlyModelViewSet):
 class OverviewMetricsView(APIView):
     def get(self, request):
         organization = require_organization(request)
-        organization_records = FinancialRecord.objects.filter(source__organization=organization)
-        organization_cases = ReconciliationCase.objects.filter(organization=organization)
+        currency = request.query_params.get("currency", "INR").upper()
+        organization_records = FinancialRecord.objects.filter(source__organization=organization, currency=currency)
+        organization_cases = ReconciliationCase.objects.filter(organization=organization, currency=currency)
 
         captured = organization_records.filter(
             record_type=FinancialRecordType.PAYMENT
@@ -149,9 +171,7 @@ class OverviewMetricsView(APIView):
         )
         unexplained = sum(
             abs(reconciliation_case.difference_minor)
-            for reconciliation_case in organization_cases.exclude(
-                status=ReconciliationStatus.MATCHED
-            )
+            for reconciliation_case in organization_cases.filter(status=ReconciliationStatus.NEEDS_REVIEW)
         )
         movement = []
         for record_type in (
@@ -178,6 +198,9 @@ class OverviewMetricsView(APIView):
         return Response(
             {
                 "captured_amount_minor": captured,
+                "currency": currency,
+                "source_count": organization.financial_data_sources.count(),
+                "fresh_source_count": organization.financial_data_sources.filter(financial_records__ingested_at__gte=timezone.now() - timedelta(hours=24)).distinct().count(),
                 "case_count": case_counts["total"],
                 "matched_case_count": case_counts["matched"],
                 "open_case_count": case_counts["open"],
@@ -190,55 +213,15 @@ class OverviewMetricsView(APIView):
 class AuditLogView(APIView):
     def get(self, request):
         organization = require_organization(request)
-        agent_run_entries = [
-            {
-                "event_type": "agent_run",
-                "occurred_at": agent_run.created_at,
-                "case_reference": agent_run.reconciliation_case.case_reference,
-                "case_public_id": agent_run.reconciliation_case.public_id,
-                "actor": agent_run.model_version,
-                "summary": f'Investigator asked "{agent_run.question}"',
-                "details": {
-                    "conclusion": agent_run.conclusion,
-                    "confidence": str(agent_run.confidence),
-                    "sufficient_evidence": agent_run.sufficient_evidence,
-                    "evidence_cited": agent_run.evidence_cited,
-                },
-            }
-            for agent_run in AgentRun.objects.filter(
-                reconciliation_case__organization=organization
-            ).select_related("reconciliation_case")
-        ]
-        evidence_connection_entries = [
-            {
-                "event_type": "evidence_connection",
-                "occurred_at": evidence_connection.created_at,
-                "case_reference": evidence_connection.reconciliation_case.case_reference,
-                "case_public_id": evidence_connection.reconciliation_case.public_id,
-                "actor": evidence_connection.created_by,
-                "summary": (
-                    f"Linked {evidence_connection.source_record.external_record_id} to "
-                    f"{evidence_connection.destination_record.external_record_id} "
-                    f"({evidence_connection.get_match_method_display()})"
-                ),
-                "details": {
-                    "confidence": str(evidence_connection.confidence),
-                    "matching_reason": evidence_connection.matching_reason,
-                    "is_verified": evidence_connection.is_verified,
-                },
-            }
-            for evidence_connection in EvidenceConnection.objects.filter(
-                reconciliation_case__organization=organization
-            ).select_related(
-                "reconciliation_case", "source_record", "destination_record"
-            )
-        ]
-        entries = sorted(
-            agent_run_entries + evidence_connection_entries,
-            key=lambda entry: entry["occurred_at"],
-            reverse=True,
-        )
-        return Response(AuditLogEntrySerializer(entries, many=True).data)
+        events = AuditEvent.objects.filter(organization=organization, reconciliation_case__isnull=False).select_related("reconciliation_case", "actor")[:500]
+        return Response([{
+            "event_type": event.event_type, "occurred_at": event.created_at,
+            "case_reference": event.reconciliation_case.case_reference,
+            "case_public_id": event.reconciliation_case.public_id,
+            "actor": event.actor.get_username() if event.actor else "system",
+            "summary": event.event_type.replace("_", " "),
+            "details": {"before": event.before, "after": event.after, "reason": event.reason, "correlation_id": str(event.correlation_id)},
+        } for event in events])
 
 
 class IngestionBatchView(APIView):
@@ -250,10 +233,7 @@ class IngestionBatchView(APIView):
         return Response(IngestionBatchSerializer(batches, many=True).data)
 
     def post(self, request):
-        # Ingestion is the onboarding boundary, so it may create a new organization on first
-        # use — unlike every other view, which only ever reads an organization that already
-        # exists. require_organization is intentionally not used here for that reason; the
-        # organization_slug/header match check below provides the equivalent safety guarantee.
+        # Membership authorizes access; the header only selects that organization.
         requested_slug = str(request.META.get(ORGANIZATION_HEADER, "")).strip()
         if not requested_slug:
             return Response(
@@ -261,6 +241,8 @@ class IngestionBatchView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         payload = request.data
+        if not isinstance(payload, dict):
+            raise DRFValidationError("Provide a JSON object.")
         required_fields = (
             "organization_slug",
             "organization_name",
@@ -283,7 +265,7 @@ class IngestionBatchView(APIView):
                 "source_name",
                 "batch_reference",
             )
-            if not str(payload[field]).strip()
+            if not isinstance(payload[field], str) or not payload[field].strip()
         ]
         if empty_fields:
             return Response(
@@ -306,10 +288,7 @@ class IngestionBatchView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        organization, _ = Organization.objects.get_or_create(
-            slug=requested_slug,
-            defaults={"name": str(payload["organization_name"]).strip()},
-        )
+        organization = require_organization(request)
         source, source_created = FinancialDataSource.objects.get_or_create(
             organization=organization,
             name=str(payload["source_name"]).strip(),
@@ -366,6 +345,8 @@ class IngestionBatchView(APIView):
         reconciliation_request = payload.get("reconcile")
         if not reconciliation_request:
             return None
+        if not isinstance(reconciliation_request, dict):
+            raise ValidationError("reconcile must be an object.")
         case_reference = str(reconciliation_request.get("case_reference", "")).strip()
         entity_id = str(reconciliation_request.get("entity_id", "")).strip()
         if not case_reference or not entity_id:
@@ -384,3 +365,25 @@ class IngestionBatchView(APIView):
             entity_id=entity_id,
             records=records,
         )
+
+
+class IdentityView(APIView):
+    def get(self, request):
+        return Response({"organization": request.organization.slug,
+                         "name": (request.user.get_full_name() or request.user.get_username()) if request.user.is_authenticated else "Demo Operator",
+                         "role": request.membership.role if request.membership else "demo"})
+
+
+class ConnectionStatusView(APIView):
+    def get(self, request):
+        sources = FinancialDataSource.objects.filter(organization=require_organization(request)).annotate(
+            last_record_at=Max("financial_records__ingested_at"), record_count=Count("financial_records"))
+        return Response([{"id": source.pk, "name": source.name, "type": source.source_type,
+                          "last_record_at": source.last_record_at, "record_count": source.record_count,
+                          "state": "no_data" if not source.last_record_at else "fresh" if source.last_record_at >= timezone.now() - timedelta(hours=24) else "stale"}
+                         for source in sources[:100]])
+
+
+class RuleVersionView(APIView):
+    def get(self, request):
+        return Response(list(ReconciliationRuleVersion.objects.filter(source__organization=require_organization(request)).values()[:100]))

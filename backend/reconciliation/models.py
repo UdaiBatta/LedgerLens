@@ -1,8 +1,11 @@
 import uuid
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import F, Q
+from .immutability import AppendOnlyModel, content_digest
+from .money import validate_currency
 
 
 class FinancialSourceType(models.TextChoices):
@@ -93,7 +96,7 @@ class FinancialDataSource(models.Model):
         return f"{self.organization.name} · {self.name}"
 
 
-class FinancialRecord(models.Model):
+class FinancialRecord(AppendOnlyModel):
     source = models.ForeignKey(
         FinancialDataSource,
         on_delete=models.PROTECT,
@@ -114,6 +117,8 @@ class FinancialRecord(models.Model):
     content_hash = models.CharField(max_length=64)
     raw_payload = models.JSONField(default=dict)
     ingested_at = models.DateTimeField(auto_now_add=True)
+    normalization_version = models.CharField(max_length=40, default="canonical-v1")
+    normalized_hash = models.CharField(max_length=64, blank=True)
 
     class Meta:
         ordering = ["occurred_at", "id"]
@@ -126,14 +131,17 @@ class FinancialRecord(models.Model):
 
     def clean(self) -> None:
         self.currency = self.currency.upper()
+        validate_currency(self.currency)
         if len(self.currency) != 3 or not self.currency.isalpha():
             raise ValidationError({"currency": "Use a three-letter currency code."})
 
     def save(self, *args, **kwargs) -> None:
-        if self.pk:
-            original = FinancialRecord.objects.only("raw_payload", "content_hash").get(pk=self.pk)
-            if original.raw_payload != self.raw_payload or original.content_hash != self.content_hash:
-                raise ValidationError("Raw source evidence is immutable after ingestion.")
+        if self._state.adding:
+            self.normalized_hash = content_digest({
+                field.attname: getattr(self, field.attname)
+                for field in self._meta.concrete_fields
+                if field.name not in {"id", "ingested_at", "normalized_hash"}
+            })
         super().save(*args, **kwargs)
 
     def __str__(self) -> str:
@@ -201,6 +209,8 @@ class ReconciliationCase(models.Model):
         null=True,
     )
     owner = models.CharField(max_length=200, blank=True)
+    assigned_to = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT)
+    workflow_status = models.CharField(max_length=32, default="unassigned")
     opened_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     resolved_at = models.DateTimeField(blank=True, null=True)
@@ -338,6 +348,9 @@ class AgentRun(models.Model):
     evidence_cited = models.JSONField(default=list)
     sufficient_evidence = models.BooleanField()
     model_version = models.CharField(max_length=100)
+    prompt_version = models.CharField(max_length=40, default="investigation-v2")
+    fallback_reason = models.CharField(max_length=100, blank=True)
+    reconciliation_run = models.ForeignKey("ReconciliationRun", null=True, blank=True, on_delete=models.PROTECT)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -345,3 +358,81 @@ class AgentRun(models.Model):
 
     def __str__(self) -> str:
         return f"{self.reconciliation_case.case_reference} · {self.created_at:%Y-%m-%d %H:%M}"
+
+
+class OrganizationMembership(models.Model):
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    role = models.CharField(max_length=20, choices=[(r, r.title()) for r in ("viewer", "analyst", "manager", "administrator", "auditor")])
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["organization", "user"], name="unique_organization_membership")]
+
+
+class ReconciliationRuleVersion(AppendOnlyModel):
+    source = models.ForeignKey(FinancialDataSource, on_delete=models.PROTECT, related_name="rule_versions")
+    version = models.CharField(max_length=64)
+    currency = models.CharField(max_length=3)
+    effective_from = models.DateTimeField()
+    effective_until = models.DateTimeField(null=True, blank=True)
+    fee_basis_points = models.PositiveIntegerField()
+    tax_basis_points = models.PositiveIntegerField()
+    refund_policy = models.CharField(max_length=32, default="deduct_processed", choices=[("deduct_processed", "Deduct processed refunds"), ("external", "Refunds settled separately")])
+    bank_wait_hours = models.PositiveIntegerField(default=48)
+    settlement_wait_hours = models.PositiveIntegerField(default=48)
+    tolerance_minor = models.PositiveBigIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["source", "version"], name="unique_source_rule_version")]
+
+    def save(self, *args, **kwargs):
+        if self.effective_until and self.effective_until <= self.effective_from:
+            raise ValidationError("Rule effective_until must follow effective_from.")
+        validate_currency(self.currency)
+        if self.fee_basis_points > 10000 or self.tax_basis_points > 10000:
+            raise ValidationError("Percentage rates above 100% are outside this rule model.")
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+
+class ReconciliationRun(AppendOnlyModel):
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    reconciliation_case = models.ForeignKey(ReconciliationCase, on_delete=models.PROTECT, related_name="reconciliation_runs")
+    as_of = models.DateTimeField()
+    engine_version = models.CharField(max_length=40, default="control-v2")
+    inputs = models.JSONField()
+    rules = models.JSONField()
+    decisions = models.JSONField()
+    checks = models.JSONField()
+    result = models.JSONField()
+    source_watermarks = models.JSONField()
+    input_hash = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-id"]
+
+
+class AuditEvent(AppendOnlyModel):
+    organization = models.ForeignKey(Organization, on_delete=models.PROTECT)
+    reconciliation_case = models.ForeignKey(ReconciliationCase, on_delete=models.PROTECT, null=True, blank=True)
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True)
+    event_type = models.CharField(max_length=64)
+    before = models.JSONField(default=dict)
+    after = models.JSONField(default=dict)
+    reason = models.TextField(blank=True)
+    correlation_id = models.UUIDField(default=uuid.uuid4)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-id"]
+
+
+class IngestionDelivery(AppendOnlyModel):
+    source = models.ForeignKey(FinancialDataSource, on_delete=models.PROTECT)
+    batch_reference = models.CharField(max_length=100)
+    content_hash = models.CharField(max_length=64)
+    payload = models.JSONField()
+    outcome = models.CharField(max_length=32)
+    created_at = models.DateTimeField(auto_now_add=True)

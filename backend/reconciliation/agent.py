@@ -1,8 +1,12 @@
 import json
 import os
+import logging
 from decimal import Decimal
 
-from .models import AgentRun, FinancialRecord, ReconciliationCase
+from .models import AgentRun, AuditEvent, FinancialRecord, ReconciliationCase
+from .money import format_minor
+
+logger = logging.getLogger(__name__)
 
 
 class InvestigationAgent:
@@ -13,14 +17,22 @@ class InvestigationAgent:
             return self._deterministic_fallback(reconciliation_case, question)
 
         try:
-            return self._run_anthropic_loop(reconciliation_case, question)
-        except Exception:
+            from anthropic import APIError
+        except ImportError:
             return self._deterministic_fallback(reconciliation_case, question)
+        try:
+            return self._run_anthropic_loop(reconciliation_case, question)
+        except (APIError, ValueError, RuntimeError) as error:
+            logger.warning("Investigation fallback: %s", type(error).__name__)
+            run = self._deterministic_fallback(reconciliation_case, question)
+            run.fallback_reason = type(error).__name__
+            run.save(update_fields=["fallback_reason"])
+            return run
 
     def _run_anthropic_loop(self, reconciliation_case, question):
         from anthropic import Anthropic
 
-        client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+        client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"], timeout=20, max_retries=1)
         messages = [{"role": "user", "content": question}]
         logged_tool_calls = []
 
@@ -83,12 +95,16 @@ class InvestigationAgent:
             ]
 
         record_id = tool_input.get("record_id") or tool_input.get("reference")
-        record = FinancialRecord.objects.filter(
+        latest = reconciliation_case.reconciliation_runs.first()
+        allowed_ids = [item["id"] for item in latest.inputs] if latest else []
+        candidates = list(FinancialRecord.objects.filter(
             source__organization=reconciliation_case.organization,
             external_record_id=record_id,
-        ).first()
-        if not record:
+            pk__in=allowed_ids,
+        )[:2])
+        if len(candidates) != 1:
             return {"found": False, "reference": record_id}
+        record = candidates[0]
         return {
             "found": True,
             "record_id": record.external_record_id,
@@ -104,15 +120,19 @@ class InvestigationAgent:
         cited = list(
             dict.fromkeys(reference for check in checks for reference in check.evidence)
         )
-        insufficient = reconciliation_case.status == "insufficient_evidence"
-        difference = Decimal(abs(reconciliation_case.difference_minor)) / Decimal("100")
+        insufficient = reconciliation_case.status != "matched"
+        latest = reconciliation_case.reconciliation_runs.first()
+        difference = abs(reconciliation_case.difference_minor)
         conclusion = (
-            f"The first unsupported difference is {reconciliation_case.currency} "
-            f"{difference:.2f} at "
+            f"The first measured difference is {format_minor(difference, reconciliation_case.currency)} at "
             f"{reconciliation_case.exception_type.replace('_', ' ')}."
         )
         if insufficient:
             conclusion += " Existing records do not prove the underlying cause."
+        if latest and not latest.result.get("amounts_known"):
+            conclusion = "Required evidence is missing or unsupported; a monetary difference cannot yet be established."
+        if reconciliation_case.status == "matched":
+            conclusion = "All supported mandatory controls passed for this reconciliation scope."
         return self._save_run(
             reconciliation_case,
             question,
@@ -132,7 +152,7 @@ class InvestigationAgent:
         )
 
     def _save_run(self, reconciliation_case, question, tool_calls, result, model_version):
-        return AgentRun.objects.create(
+        run = AgentRun.objects.create(
             reconciliation_case=reconciliation_case,
             question=question,
             tool_calls=tool_calls,
@@ -142,7 +162,12 @@ class InvestigationAgent:
             evidence_cited=result.get("evidence_cited", []),
             sufficient_evidence=bool(result.get("sufficient_evidence")),
             model_version=model_version,
+            reconciliation_run=reconciliation_case.reconciliation_runs.first(),
+            fallback_reason="not_configured" if model_version == "deterministic-fallback" else "",
         )
+        AuditEvent.objects.create(organization=reconciliation_case.organization, reconciliation_case=reconciliation_case,
+                                  event_type="agent_run", after={"agent_run_id": run.pk, "model": model_version})
+        return run
 
     @staticmethod
     def _parse_result(response_text):
@@ -160,7 +185,7 @@ class InvestigationAgent:
         if not isinstance(result["sufficient_evidence"], bool):
             raise ValueError("The sufficient_evidence field must be boolean.")
         confidence = Decimal(str(result["confidence"]))
-        if confidence < 0 or confidence > 1:
+        if not confidence.is_finite() or confidence < 0 or confidence > 1:
             raise ValueError("Confidence must be between zero and one.")
         return result
 

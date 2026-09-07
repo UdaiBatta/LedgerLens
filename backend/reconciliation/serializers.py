@@ -98,6 +98,11 @@ class AgentRunSerializer(serializers.ModelSerializer):
 
 class ReconciliationCaseListSerializer(serializers.ModelSerializer):
     difference_minor = serializers.IntegerField(read_only=True)
+    amounts_known = serializers.SerializerMethodField()
+
+    def get_amounts_known(self, obj):
+        latest = obj.reconciliation_runs.first()
+        return latest.result.get("amounts_known", False) if latest else False
 
     class Meta:
         model = ReconciliationCase
@@ -111,6 +116,9 @@ class ReconciliationCaseListSerializer(serializers.ModelSerializer):
             "expected_amount_minor",
             "actual_amount_minor",
             "difference_minor",
+            "amounts_known",
+            "workflow_status",
+            "assigned_to_id",
             "owner",
             "opened_at",
         )

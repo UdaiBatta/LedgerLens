@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import timezone as datetime_timezone
 
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import transaction, IntegrityError
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -15,6 +15,7 @@ from .models import (
     FinancialRecordType,
     IngestionBatch,
     IngestionBatchStatus,
+    IngestionDelivery,
 )
 
 
@@ -32,13 +33,30 @@ class FinancialRecordIngestionService:
         FinancialRecordType.REFUND,
     }
 
-    @transaction.atomic
     def ingest(
         self,
         source: FinancialDataSource,
         batch_reference: str,
         records: list[dict],
     ) -> IngestionResult:
+        if not isinstance(records, list) or not records or len(records) > 10000:
+            raise ValidationError("Provide between 1 and 10,000 records.")
+        if not isinstance(batch_reference, str) or not 1 <= len(batch_reference.strip()) <= 100:
+            raise ValidationError("batch_reference must contain 1 to 100 characters.")
+        try:
+            result = self._ingest_batch(source, batch_reference, records)
+        except ValidationError:
+            IngestionDelivery.objects.create(source=source, batch_reference=batch_reference,
+                content_hash=self._hash(records), payload=records, outcome="conflict")
+            raise
+        IngestionDelivery.objects.create(source=source, batch_reference=batch_reference,
+            content_hash=self._hash(records), payload=records,
+            outcome="replayed" if result.replayed else result.batch.status)
+        return result
+
+    @transaction.atomic
+    def _ingest_batch(self, source, batch_reference, records):
+        FinancialDataSource.objects.select_for_update().get(pk=source.pk)
         if not batch_reference.strip():
             raise ValidationError({"batch_reference": "This field is required."})
         if not isinstance(records, list) or not records:
@@ -68,12 +86,13 @@ class FinancialRecordIngestionService:
 
         for index, source_record in enumerate(records):
             try:
-                record, created = self._ingest_record(source, batch_reference, source_record)
+                with transaction.atomic():
+                    record, created = self._ingest_record(source, batch_reference, source_record)
                 if created:
                     imported_records.append(record)
                 else:
                     duplicate_count += 1
-            except (KeyError, TypeError, ValueError, ValidationError) as error:
+            except (KeyError, TypeError, ValueError, ValidationError, IntegrityError) as error:
                 errors.append(
                     {
                         "index": index,
@@ -88,7 +107,7 @@ class FinancialRecordIngestionService:
         batch.duplicate_count = duplicate_count
         batch.rejected_count = len(errors)
         batch.errors = errors
-        batch.status = self._batch_status(len(imported_records), len(errors))
+        batch.status = self._batch_status(len(imported_records) + duplicate_count, len(errors))
         batch.completed_at = timezone.now()
         batch.save(
             update_fields=[
@@ -138,6 +157,7 @@ class FinancialRecordIngestionService:
         currency = str(source_record.get("currency", "INR")).upper()
         record_status = str(source_record.get("status", ""))
         reference = str(source_record.get("reference", ""))
+        normalization_version = source_record.get("normalization_version", "canonical-v1")
         existing_record = FinancialRecord.objects.filter(
             source=source,
             record_type=record_type,
@@ -154,6 +174,7 @@ class FinancialRecordIngestionService:
                 occurred_at,
                 record_status,
                 reference,
+                normalization_version,
             )
             existing_values = (
                 existing_record.entity_id,
@@ -165,6 +186,7 @@ class FinancialRecordIngestionService:
                 existing_record.occurred_at,
                 existing_record.status,
                 existing_record.reference,
+                existing_record.normalization_version,
             )
             if existing_record.content_hash != content_hash or existing_values != normalized_values:
                 raise ValidationError(
@@ -188,6 +210,7 @@ class FinancialRecordIngestionService:
             reference=reference,
             content_hash=content_hash,
             raw_payload=raw_payload,
+            normalization_version=normalization_version,
         )
         record.full_clean()
         record.save()

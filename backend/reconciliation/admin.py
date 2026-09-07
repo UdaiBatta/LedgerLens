@@ -8,6 +8,11 @@ from .models import (
     FinancialRecord,
     IngestionBatch,
     Organization,
+    OrganizationMembership,
+    ReconciliationRuleVersion,
+    ReconciliationRun,
+    AuditEvent,
+    IngestionDelivery,
     ReconciliationCase,
 )
 
@@ -27,6 +32,11 @@ class FinancialDataSourceAdmin(admin.ModelAdmin):
 
 @admin.register(FinancialRecord)
 class FinancialRecordAdmin(admin.ModelAdmin):
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
     list_display = (
         "external_record_id",
         "record_type",
@@ -98,3 +108,20 @@ class AgentRunAdmin(admin.ModelAdmin):
         "created_at",
     )
     list_filter = ("sufficient_evidence", "model_version")
+
+
+admin.site.register(OrganizationMembership)
+
+
+class ImmutableControlAdmin(admin.ModelAdmin):
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+admin.site.register(ReconciliationRuleVersion, ImmutableControlAdmin)
+admin.site.register(ReconciliationRun, ImmutableControlAdmin)
+admin.site.register(AuditEvent, ImmutableControlAdmin)
+admin.site.register(IngestionDelivery, ImmutableControlAdmin)
