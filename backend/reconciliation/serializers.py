@@ -108,7 +108,7 @@ class ReconciliationCaseListSerializer(serializers.ModelSerializer):
     amounts_known = serializers.SerializerMethodField()
 
     def get_amounts_known(self, obj):
-        latest = obj.reconciliation_runs.first()
+        latest = next(iter(obj.latest_runs), None) if hasattr(obj, "latest_runs") else obj.reconciliation_runs.first()
         return latest.result.get("amounts_known", False) if latest else False
 
     class Meta:

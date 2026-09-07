@@ -1,6 +1,6 @@
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import Count, Q, Sum, Max
+from django.db.models import Count, Q, Sum, Max, Prefetch
 from django.utils import timezone
 from datetime import timedelta
 from rest_framework import status, viewsets
@@ -16,6 +16,8 @@ from .ingestion import FinancialRecordIngestionService
 from .models import (
     AgentRun,
     AuditEvent,
+    EvidenceConnection,
+    ReconciliationRun,
     ReconciliationRuleVersion,
     FinancialDataSource,
     FinancialRecord,
@@ -44,12 +46,20 @@ class ReconciliationCaseViewSet(viewsets.ReadOnlyModelViewSet):
         queryset = ReconciliationCase.objects.filter(organization=organization).select_related(
             "organization",
             "first_break_record__source",
-        ).prefetch_related(
-            "check_results",
-            "agent_runs",
-            "evidence_connections__source_record__source",
-            "evidence_connections__destination_record__source",
         )
+        queryset = queryset.prefetch_related(Prefetch(
+            "reconciliation_runs",
+            queryset=ReconciliationRun.objects.only("id", "result", "reconciliation_case_id").order_by("-id")[:1],
+            to_attr="latest_runs",
+        ))
+        if self.action != "list":
+            # Join each edge's records instead of constructing a large OR expression
+            # for every record in a settlement when prefetching nested relationships.
+            queryset = queryset.prefetch_related(
+                "check_results", "agent_runs",
+                Prefetch("evidence_connections", queryset=EvidenceConnection.objects.select_related(
+                    "source_record__source", "destination_record__source")),
+            )
         requested_status = self.request.query_params.get("status")
         return queryset.filter(status=requested_status) if requested_status else queryset
 

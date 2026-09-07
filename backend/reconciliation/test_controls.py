@@ -7,6 +7,7 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db import connection, transaction, DatabaseError
 from django.test import TestCase, override_settings
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from .engine import ReconciliationEngine
@@ -271,6 +272,28 @@ class FinancialControlTests(TestCase):
         self.assertEqual((run.model_requests, run.input_tokens, run.confidence), (0, 0, 0))
         self.assertIn("result", run.tool_calls[0])
         self.assertIn("No correction", run.recommended_action)
+
+    def test_case_list_does_not_load_the_evidence_graph(self):
+        case = self.reconcile(self.chain())
+        user = get_user_model().objects.create_user(username="list-reader")
+        OrganizationMembership.objects.create(organization=self.organization, user=user, role="viewer")
+        self.client.force_login(user)
+        with CaptureQueriesContext(connection) as queries:
+            response = self.client.get("/api/cases/", HTTP_X_ORGANIZATION_SLUG=self.organization.slug)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()[0]["public_id"], str(case.public_id))
+        self.assertTrue(response.json()[0]["amounts_known"])
+        self.assertFalse(any("reconciliation_evidenceconnection" in query["sql"] for query in queries))
+
+    def test_case_detail_still_contains_joined_source_evidence(self):
+        case = self.reconcile(self.chain())
+        user = get_user_model().objects.create_user(username="detail-reader")
+        OrganizationMembership.objects.create(organization=self.organization, user=user, role="viewer")
+        self.client.force_login(user)
+        response = self.client.get(f"/api/cases/{case.public_id}/", HTTP_X_ORGANIZATION_SLUG=self.organization.slug)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.json()["evidence_connections"]), 6)
+        self.assertEqual(response.json()["evidence_connections"][0]["source"]["source_name"], self.source.name)
 
 
 class AuthenticationControlTests(TestCase):
