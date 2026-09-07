@@ -334,7 +334,7 @@ class CheckResult(models.Model):
         return f"{self.reconciliation_case.case_reference} · {self.check_name}"
 
 
-class AgentRun(models.Model):
+class AgentRun(AppendOnlyModel):
     reconciliation_case = models.ForeignKey(
         ReconciliationCase,
         on_delete=models.CASCADE,
@@ -350,6 +350,10 @@ class AgentRun(models.Model):
     model_version = models.CharField(max_length=100)
     prompt_version = models.CharField(max_length=40, default="investigation-v2")
     fallback_reason = models.CharField(max_length=100, blank=True)
+    latency_ms = models.PositiveIntegerField(default=0)
+    input_tokens = models.PositiveIntegerField(default=0)
+    output_tokens = models.PositiveIntegerField(default=0)
+    model_requests = models.PositiveIntegerField(default=0)
     reconciliation_run = models.ForeignKey("ReconciliationRun", null=True, blank=True, on_delete=models.PROTECT)
     created_at = models.DateTimeField(auto_now_add=True)
 

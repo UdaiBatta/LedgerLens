@@ -92,6 +92,13 @@ class AgentRunSerializer(serializers.ModelSerializer):
             "evidence_cited",
             "sufficient_evidence",
             "model_version",
+            "prompt_version",
+            "fallback_reason",
+            "reconciliation_run_id",
+            "latency_ms",
+            "input_tokens",
+            "output_tokens",
+            "model_requests",
             "created_at",
         )
 

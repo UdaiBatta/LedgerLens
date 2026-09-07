@@ -17,6 +17,17 @@ from .models import (
 )
 
 
+class ReadOnlyEvidenceAdmin(admin.ModelAdmin):
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
 @admin.register(Organization)
 class OrganizationAdmin(admin.ModelAdmin):
     list_display = ("name", "slug", "created_at")
@@ -25,13 +36,16 @@ class OrganizationAdmin(admin.ModelAdmin):
 
 @admin.register(FinancialDataSource)
 class FinancialDataSourceAdmin(admin.ModelAdmin):
+    def get_readonly_fields(self, request, obj=None):
+        return ("organization", "source_type", "external_account_reference") if obj else ()
+
     list_display = ("name", "organization", "source_type", "created_at")
     list_filter = ("source_type",)
     search_fields = ("name", "organization__name", "external_account_reference")
 
 
 @admin.register(FinancialRecord)
-class FinancialRecordAdmin(admin.ModelAdmin):
+class FinancialRecordAdmin(ReadOnlyEvidenceAdmin):
     def has_change_permission(self, request, obj=None):
         return False
 
@@ -50,7 +64,7 @@ class FinancialRecordAdmin(admin.ModelAdmin):
 
 
 @admin.register(IngestionBatch)
-class IngestionBatchAdmin(admin.ModelAdmin):
+class IngestionBatchAdmin(ReadOnlyEvidenceAdmin):
     list_display = (
         "batch_reference",
         "source",
@@ -66,7 +80,7 @@ class IngestionBatchAdmin(admin.ModelAdmin):
 
 
 @admin.register(ReconciliationCase)
-class ReconciliationCaseAdmin(admin.ModelAdmin):
+class ReconciliationCaseAdmin(ReadOnlyEvidenceAdmin):
     list_display = (
         "case_reference",
         "organization",
@@ -79,7 +93,7 @@ class ReconciliationCaseAdmin(admin.ModelAdmin):
 
 
 @admin.register(EvidenceConnection)
-class EvidenceConnectionAdmin(admin.ModelAdmin):
+class EvidenceConnectionAdmin(ReadOnlyEvidenceAdmin):
     list_display = (
         "reconciliation_case",
         "sequence_number",
@@ -93,13 +107,13 @@ class EvidenceConnectionAdmin(admin.ModelAdmin):
 
 
 @admin.register(CheckResult)
-class CheckResultAdmin(admin.ModelAdmin):
+class CheckResultAdmin(ReadOnlyEvidenceAdmin):
     list_display = ("reconciliation_case", "check_name", "result", "ran_at")
     list_filter = ("result",)
 
 
 @admin.register(AgentRun)
-class AgentRunAdmin(admin.ModelAdmin):
+class AgentRunAdmin(ReadOnlyEvidenceAdmin):
     list_display = (
         "reconciliation_case",
         "confidence",
@@ -122,6 +136,6 @@ class ImmutableControlAdmin(admin.ModelAdmin):
 
 
 admin.site.register(ReconciliationRuleVersion, ImmutableControlAdmin)
-admin.site.register(ReconciliationRun, ImmutableControlAdmin)
-admin.site.register(AuditEvent, ImmutableControlAdmin)
-admin.site.register(IngestionDelivery, ImmutableControlAdmin)
+admin.site.register(ReconciliationRun, ReadOnlyEvidenceAdmin)
+admin.site.register(AuditEvent, ReadOnlyEvidenceAdmin)
+admin.site.register(IngestionDelivery, ReadOnlyEvidenceAdmin)

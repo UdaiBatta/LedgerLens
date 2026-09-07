@@ -1,5 +1,7 @@
 from datetime import timedelta
 from unittest.mock import patch
+from types import SimpleNamespace
+import json
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
@@ -220,6 +222,57 @@ class FinancialControlTests(TestCase):
         self.assertEqual(InvestigationAgent()._execute_tool(case, "get_transaction", {"record_id": "invented"})["found"], False)
 
 
+    def test_ai_stays_on_original_snapshot_when_case_reruns_mid_request(self):
+        records = self.chain()
+        case = self.reconcile([r for r in records if r.record_type != "ledger_entry"])
+        original = case.reconciliation_runs.first()
+        agent = InvestigationAgent()
+        agent.model_name = "test-model"
+        tool_response = SimpleNamespace(content=[SimpleNamespace(type="tool_use", name="get_check_results", input={}, id="tool-1")],
+                                        usage=SimpleNamespace(input_tokens=10, output_tokens=5))
+        final_response = SimpleNamespace(content=[SimpleNamespace(type="text", text=json.dumps({
+            "conclusion": "Ledger evidence is missing in the inspected snapshot.", "confidence": 0.7,
+            "evidence_cited": ["B"], "sufficient_evidence": False,
+            "recommended_action": "Obtain the ledger receipt."}))], usage=SimpleNamespace(input_tokens=20, output_tokens=15))
+
+        def respond(**kwargs):
+            if len(kwargs["messages"]) == 1:
+                self.reconcile(records)
+                return tool_response
+            return final_response
+
+        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-not-real"}), patch("anthropic.Anthropic") as provider:
+            provider.return_value.messages.create.side_effect = respond
+            run = agent.answer(case, "Explain this case")
+        case.refresh_from_db()
+        self.assertEqual(case.status, "matched")
+        self.assertEqual(run.reconciliation_run_id, original.pk)
+        self.assertEqual((run.input_tokens, run.output_tokens, run.model_requests), (30, 20, 2))
+        self.assertTrue(any(check["classification"] == "ledger_posting_missing" for check in run.tool_calls[0]["result"]))
+        self.assertNotIn("raw_payload", json.dumps(run.tool_calls))
+
+    def test_ai_rejects_unknown_tool_and_wrong_record_type(self):
+        case = self.reconcile(self.chain())
+        agent = InvestigationAgent()
+        with self.assertRaises(ValueError):
+            agent._execute_tool(case, "post_journal", {})
+        self.assertFalse(agent._execute_tool(case, "get_bank_statement_line", {"record_id": "P"})["found"])
+
+    def test_invalid_model_confidence_is_validation_error(self):
+        for confidence in ["not-a-number", "NaN", "Infinity"]:
+            with self.subTest(confidence=confidence), self.assertRaises(ValueError):
+                InvestigationAgent._parse_result(json.dumps({"conclusion": "Explanation", "confidence": confidence,
+                    "evidence_cited": [], "sufficient_evidence": False}))
+
+    def test_fallback_records_checks_without_paid_call_or_fake_confidence(self):
+        case = self.reconcile(self.chain())
+        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": ""}):
+            run = InvestigationAgent().answer(case, "Explain")
+        self.assertEqual((run.model_requests, run.input_tokens, run.confidence), (0, 0, 0))
+        self.assertIn("result", run.tool_calls[0])
+        self.assertIn("No correction", run.recommended_action)
+
+
 class AuthenticationControlTests(TestCase):
     def setUp(self):
         self.org = Organization.objects.create(name="A", slug="a")
@@ -239,6 +292,19 @@ class AuthenticationControlTests(TestCase):
     def test_viewer_cannot_ingest(self):
         self.client.force_login(self.user)
         self.assertEqual(self.client.post("/api/ingestion/batches/", {}, HTTP_X_ORGANIZATION_SLUG="a").status_code, 403)
+
+    def test_operational_reads_are_tenant_scoped(self):
+        self.client.force_login(self.user)
+        for path in ["/api/connections/", "/api/rule-versions/", "/api/identity/"]:
+            self.assertEqual(self.client.get(path, HTTP_X_ORGANIZATION_SLUG="b").status_code, 403)
+        identity = self.client.get("/api/identity/", HTTP_X_ORGANIZATION_SLUG="a").json()
+        self.assertEqual((identity["name"], identity["role"]), ("analyst", "viewer"))
+
+    def test_malformed_ingestion_object_returns_validation_error(self):
+        OrganizationMembership.objects.filter(user=self.user).update(role="analyst")
+        self.client.force_login(self.user)
+        response = self.client.post("/api/ingestion/batches/", data="[]", content_type="application/json", HTTP_X_ORGANIZATION_SLUG="a")
+        self.assertEqual(response.status_code, 400)
 
     @override_settings(DEBUG=False, LEDGERLENS_DEMO_MODE=True, SECURE_SSL_REDIRECT=False)
     def test_demo_bypass_disabled_in_production(self):
