@@ -10,6 +10,12 @@ export type FinancialRecord = {
   occurred_at: string
   status: string
   source_name: string
+  reference: string
+  batch_id: string
+  ingested_at: string
+  normalization_version: string
+  content_hash: string
+  normalized_hash: string
   raw_payload: Record<string, unknown>
 }
 
@@ -33,6 +39,7 @@ export type CheckResult = {
   result: "passed" | "failed" | "waiting"
   evidence: string[]
   details: string
+  ran_at: string
 }
 
 export type EvidenceConnection = {
