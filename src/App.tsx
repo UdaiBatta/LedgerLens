@@ -33,13 +33,8 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { SidebarNav, type NavGroupData } from "@/components/ui/dashboard-sidebar"
 import { Features } from "@/components/ui/features-6"
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
+import { EvidenceRecordSheet } from "@/components/evidence-record-sheet"
+import { formatMoney, readableLabel } from "@/lib/financial-format"
 import {
   Table,
   TableBody,
@@ -68,15 +63,6 @@ import {
 const CRTWarp = lazy(() => import("@/components/CRTWarp"))
 
 type Screen = "landing" | "dashboard" | "case" | "moneyGraph" | "auditLog" | "exceptions"
-
-function formatMoney(amountMinor: number, currency = "INR") {
-  const formatter = new Intl.NumberFormat("en-IN", { style: "currency", currency })
-  return formatter.format(amountMinor / 10 ** (formatter.resolvedOptions().maximumFractionDigits ?? 2))
-}
-
-function readableLabel(value: string) {
-  return value.replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase())
-}
 
 const appNav = [
   ["Overview", CircleDollarSign],
@@ -400,12 +386,7 @@ function EvidenceTrail({ publicId, casesLoading, openCase, openGraph }: { public
           <button onClick={openGraph}>Open evidence trail <ArrowRight aria-hidden="true" /></button>
         </footer>
       </> : null}
-      <Sheet open={Boolean(selectedRecord)} onOpenChange={(open) => { if (!open) setSelectedRecord(null) }}>
-        <SheetContent className="evidence-sheet">
-          <SheetHeader><SheetTitle>Source evidence</SheetTitle><SheetDescription>Immutable record received from {selectedRecord?.source_name}.</SheetDescription></SheetHeader>
-          {selectedRecord ? <div className="evidence-sheet__body"><dl><div><dt>Reference</dt><dd>{selectedRecord.external_record_id}</dd></div><div><dt>Type</dt><dd>{readableLabel(selectedRecord.record_type)}</dd></div><div><dt>Amount</dt><dd>{formatMoney(selectedRecord.amount_minor, selectedRecord.currency)}</dd></div><div><dt>Occurred</dt><dd>{new Date(selectedRecord.occurred_at).toLocaleString("en-IN")}</dd></div></dl><h3>Raw source payload</h3><pre>{JSON.stringify(selectedRecord.raw_payload, null, 2)}</pre><button className="evidence-sheet__case-link" onClick={openCase}>Open full case <ArrowRight aria-hidden="true" /></button></div> : null}
-        </SheetContent>
-      </Sheet>
+      <EvidenceRecordSheet record={selectedRecord} reconciliationCase={reconciliationCase} onSelectRecord={setSelectedRecord} onClose={() => setSelectedRecord(null)} onOpenCase={openCase} />
     </article>
   )
 }
@@ -513,18 +494,13 @@ function CaseDetail({ publicId, goLanding, goDashboard, goExceptions, goMoneyGra
         {reconciliationCase ? <>
           <header className="case-heading"><div><div><h1>{readableLabel(reconciliationCase.exception_type)} · {reconciliationCase.amounts_known ? formatMoney(Math.abs(reconciliationCase.difference_minor), reconciliationCase.currency) : "Awaiting evidence"}</h1><span className={`status status--${readableLabel(reconciliationCase.status).toLowerCase().replace(" ", "-")}`}>{readableLabel(reconciliationCase.status)}</span></div><p><code>{reconciliationCase.case_reference}</code> · {reconciliationCase.entity_id}</p></div><Button onClick={assignToMe}><UserPlus data-icon="inline-start" aria-hidden="true" />{reconciliationCase.owner ? `Take over · ${reconciliationCase.owner}` : "Assign to me"}</Button></header>
           <section className="case-layout">
-            <article className="case-path"><header><span>Transaction path</span><button className="open-graph-link" onClick={() => goMoneyGraph(publicId)}><Network aria-hidden="true" />Open money graph</button></header>{isBatchedCase ? <div className="case-path__batched-notice"><Network aria-hidden="true" /><p><strong>This case has {paymentCount} payments settling together.</strong>Its evidence forms a graph, not a single line — open the money graph to see how every record connects.</p><button onClick={() => goMoneyGraph(publicId)}>Open money graph<ArrowRight aria-hidden="true" /></button></div> : <ol>{pathRecords.map((record, index) => { const icons = [FileCheck2, BadgeIndianRupee, Banknote, BadgeIndianRupee, Landmark, Building2, ReceiptText]; const Icon = icons[index % icons.length]; const isBreak = record.id === reconciliationCase.first_break_record?.id; const isAdjustment = ["fee", "tax", "refund"].includes(record.record_type); const state = isBreak ? "mismatch" : isAdjustment ? "fee" : "verified"; return <li className={`case-path__step case-path__step--${state}`} key={record.id}><button className={state} onClick={() => setSelectedRecord(record)}><span><Icon aria-hidden="true" /></span><div><strong>{readableLabel(record.record_type)}</strong><code>{record.external_record_id}</code><small>{new Date(record.occurred_at).toLocaleString("en-IN")}</small><em>{isBreak ? reconciliationCase.amounts_known ? "First divergence" : "Evidence gap" : isAdjustment ? "Source adjustment" : "Source record"}</em></div><b>{formatMoney(record.amount_minor, record.currency)}</b></button></li>})}</ol>}{reconciliationCase.first_break_record ? <div className="case-path__alert"><AlertTriangle aria-hidden="true" /><p><strong>{reconciliationCase.amounts_known ? "First divergence" : "Evidence gap"}</strong>{reconciliationCase.amounts_known ? `Actual differs from expected by ${formatMoney(Math.abs(reconciliationCase.difference_minor), reconciliationCase.currency)}.` : "The relationship or amount needs further evidence before a difference can be established."} Select any record to inspect its source payload.</p></div> : null}</article>
+            <article className="case-path"><header><span>Transaction path</span><button className="open-graph-link" onClick={() => goMoneyGraph(publicId)}><Network aria-hidden="true" />Open money graph</button></header>{isBatchedCase ? <div className="case-path__batched-notice"><Network aria-hidden="true" /><p><strong>This case has {paymentCount} payments settling together.</strong>Its evidence forms a graph, not a single line — open the money graph to see how every record connects.</p><button onClick={() => goMoneyGraph(publicId)}>Open money graph<ArrowRight aria-hidden="true" /></button></div> : <ol>{pathRecords.map((record, index) => { const icons = [FileCheck2, BadgeIndianRupee, Banknote, BadgeIndianRupee, Landmark, Building2, ReceiptText]; const Icon = icons[index % icons.length]; const isBreak = record.id === reconciliationCase.first_break_record?.id; const isAdjustment = ["fee", "tax", "refund"].includes(record.record_type); const state = isBreak ? "mismatch" : isAdjustment ? "fee" : "verified"; return <li className={`case-path__step case-path__step--${state}`} key={record.id}><button className={state} onClick={() => setSelectedRecord(record)}><span><Icon aria-hidden="true" /></span><div><strong>{readableLabel(record.record_type)}</strong><code>{record.external_record_id}</code><small>{new Date(record.occurred_at).toLocaleString("en-IN")}</small><em>{isBreak ? reconciliationCase.amounts_known ? "First divergence" : "Evidence gap" : isAdjustment ? "Source adjustment" : "Source record"}</em></div><b>{formatMoney(record.amount_minor, record.currency)}</b></button></li>})}</ol>}{reconciliationCase.first_break_record ? <div className="case-path__alert"><AlertTriangle aria-hidden="true" /><p><strong>{reconciliationCase.amounts_known ? "First divergence" : "Evidence gap"}</strong>{reconciliationCase.amounts_known ? `Actual differs from expected by ${formatMoney(Math.abs(reconciliationCase.difference_minor), reconciliationCase.currency)}.` : "The relationship or amount needs further evidence before a difference can be established."} Select a record to review its checks and linked evidence.</p></div> : null}</article>
             <article className="case-finding"><header><div><Bot aria-hidden="true" /><span>AI Investigator</span></div><Badge>{latestRun ? latestRun.model_version === "deterministic-fallback" ? "Rules summary" : "AI analysis" : "Ready"}</Badge></header><p className="case-finding__meta">{latestRun ? "Based on the reconciliation snapshot recorded with this investigation." : "Read the deterministic checks before requesting an investigation."}</p><h2>{latestRun?.conclusion ?? "Ask a question after reviewing the deterministic evidence."}</h2>{latestRun ? <><div className="citations">{latestRun.evidence_cited.map((reference) => <button key={reference} onClick={() => setSelectedRecord(pathRecords.find((record) => record.external_record_id === reference) ?? null)}>{reference}</button>)}</div><section><h3>Recommended next action</h3><p>{latestRun.recommended_action}</p></section></> : null}<div className="agent-history">{reconciliationCase.agent_runs.map((run) => <article key={run.id}><strong>{run.question}</strong><p>{run.conclusion}</p><small>{run.model_version}</small></article>)}</div><form onSubmit={ask}><label htmlFor="investigator-question">Ask about this case</label><div><input id="investigator-question" value={question} maxLength={2000} onChange={(event) => setQuestion(event.target.value)} placeholder="Why is this case still open?" disabled={asking} /><button type="submit" aria-label="Ask AI Investigator" disabled={asking}>{asking ? "…" : <ArrowRight aria-hidden="true" />}</button></div></form><small><ShieldCheck aria-hidden="true" />Analysis only. No source records or money movements were changed.</small></article>
           </section>
           <section className="checks-section"><header><div><h2>Checks and evidence</h2><span>Deterministic output supplied to the AI investigator</span></div><Badge variant="outline">{passedChecks} passed · {reconciliationCase.check_results.length - passedChecks} unresolved</Badge></header><Table><TableHeader><TableRow><TableHead>Check</TableHead><TableHead>Result</TableHead><TableHead>Evidence</TableHead></TableRow></TableHeader><TableBody>{reconciliationCase.check_results.map((item) => <TableRow key={item.check_name}><TableCell>{item.check_name}</TableCell><TableCell><span className={`check check--${item.result}`}>{item.result === "passed" ? <Check aria-hidden="true" /> : <AlertTriangle aria-hidden="true" />}{readableLabel(item.result)}</span></TableCell><TableCell><div className="evidence-buttons">{item.evidence.map((reference) => <button key={reference} onClick={() => setSelectedRecord(pathRecords.find((record) => record.external_record_id === reference) ?? null)}>{reference}</button>)}</div></TableCell></TableRow>)}</TableBody></Table></section>
         </> : null}
       </main>
-      <Sheet open={Boolean(selectedRecord)} onOpenChange={(open) => { if (!open) setSelectedRecord(null) }}>
-        <SheetContent className="evidence-sheet">
-          <SheetHeader><SheetTitle>Source evidence</SheetTitle><SheetDescription>Immutable record received from {selectedRecord?.source_name}.</SheetDescription></SheetHeader>
-          {selectedRecord ? <div className="evidence-sheet__body"><dl><div><dt>Reference</dt><dd>{selectedRecord.external_record_id}</dd></div><div><dt>Type</dt><dd>{readableLabel(selectedRecord.record_type)}</dd></div><div><dt>Amount</dt><dd>{formatMoney(selectedRecord.amount_minor, selectedRecord.currency)}</dd></div><div><dt>Occurred</dt><dd>{new Date(selectedRecord.occurred_at).toLocaleString("en-IN")}</dd></div></dl><h3>Raw source payload</h3><pre>{JSON.stringify(selectedRecord.raw_payload, null, 2)}</pre></div> : null}
-        </SheetContent>
-      </Sheet>
+      <EvidenceRecordSheet record={selectedRecord} reconciliationCase={reconciliationCase} onSelectRecord={setSelectedRecord} onClose={() => setSelectedRecord(null)} />
     </AppShell>
   )
 }
@@ -642,12 +618,7 @@ function MoneyGraphPage({ publicId, goLanding, goDashboard, goExceptions, goCase
           </section>
         </> : null}
       </main>
-      <Sheet open={Boolean(selectedRecord)} onOpenChange={(open) => { if (!open) setSelectedRecord(null) }}>
-        <SheetContent className="evidence-sheet">
-          <SheetHeader><SheetTitle>Source evidence</SheetTitle><SheetDescription>Immutable record received from {selectedRecord?.source_name}.</SheetDescription></SheetHeader>
-          {selectedRecord ? <div className="evidence-sheet__body"><dl><div><dt>Reference</dt><dd>{selectedRecord.external_record_id}</dd></div><div><dt>Type</dt><dd>{readableLabel(selectedRecord.record_type)}</dd></div><div><dt>Amount</dt><dd>{formatMoney(selectedRecord.amount_minor, selectedRecord.currency)}</dd></div><div><dt>Occurred</dt><dd>{new Date(selectedRecord.occurred_at).toLocaleString("en-IN")}</dd></div></dl><h3>Raw source payload</h3><pre>{JSON.stringify(selectedRecord.raw_payload, null, 2)}</pre></div> : null}
-        </SheetContent>
-      </Sheet>
+      <EvidenceRecordSheet record={selectedRecord} reconciliationCase={reconciliationCase} onSelectRecord={setSelectedRecord} onClose={() => setSelectedRecord(null)} />
     </AppShell>
   )
 }

@@ -294,6 +294,13 @@ class FinancialControlTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.json()["evidence_connections"]), 6)
         self.assertEqual(response.json()["evidence_connections"][0]["source"]["source_name"], self.source.name)
+        stored_record = case.evidence_connections.first().source_record
+        evidence = response.json()["evidence_connections"][0]["source"]
+        self.assertEqual(evidence["content_hash"], stored_record.content_hash)
+        self.assertEqual(evidence["normalized_hash"], stored_record.normalized_hash)
+        self.assertEqual(evidence["normalization_version"], stored_record.normalization_version)
+        self.assertEqual(evidence["batch_id"], stored_record.batch_id)
+        self.assertIsNotNone(evidence["ingested_at"])
 
 
 class AuthenticationControlTests(TestCase):
