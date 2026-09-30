@@ -28,6 +28,11 @@ class FinancialRecordSerializer(serializers.ModelSerializer):
             "status",
             "reference",
             "source_name",
+            "batch_id",
+            "ingested_at",
+            "normalization_version",
+            "content_hash",
+            "normalized_hash",
             "raw_payload",
         )
 

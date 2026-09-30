@@ -40,6 +40,12 @@ The Connections, Rule Studio and reconciliation history APIs do not yet have com
 
 These checks cover a synthetic local operator workflow, not live provider connectivity or production load.
 
+## Evidence drawer follow-up (2026-09-08)
+
+The overview, case page and money graph now share a record explanation drawer. It shows cited checks with failed/waiting results first, their recorded explanations, and navigable confirmed/candidate links. Import metadata, integrity hashes and original JSON are collapsed. Shared external references are labeled ambiguous rather than attributed to one record. A case whose difference is unknown retains that qualification alongside historical check results.
+
+Verified locally: frontend checks and production build, the existing API detail regression with added provenance assertions, and Edge browser checks across all three entry points, linked-record navigation and a missing-GL case. Desktop and 390px mobile drawer checks passed with no page errors or internal horizontal overflow. No financial data or calculation rules changed.
+
 ## Known limits
 
 No live bank/processor/ERP connectors, signed webhooks, encrypted connection credentials, durable workers, full pagination, explicit many-to-many allocation, chargeback/reversal/reserve accounting, balanced journal/period model or production-scale benchmark.
