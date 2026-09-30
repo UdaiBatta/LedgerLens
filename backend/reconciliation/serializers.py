@@ -28,6 +28,11 @@ class FinancialRecordSerializer(serializers.ModelSerializer):
             "status",
             "reference",
             "source_name",
+            "batch_id",
+            "ingested_at",
+            "normalization_version",
+            "content_hash",
+            "normalized_hash",
             "raw_payload",
         )
 
@@ -92,12 +97,24 @@ class AgentRunSerializer(serializers.ModelSerializer):
             "evidence_cited",
             "sufficient_evidence",
             "model_version",
+            "prompt_version",
+            "fallback_reason",
+            "reconciliation_run_id",
+            "latency_ms",
+            "input_tokens",
+            "output_tokens",
+            "model_requests",
             "created_at",
         )
 
 
 class ReconciliationCaseListSerializer(serializers.ModelSerializer):
     difference_minor = serializers.IntegerField(read_only=True)
+    amounts_known = serializers.SerializerMethodField()
+
+    def get_amounts_known(self, obj):
+        latest = next(iter(obj.latest_runs), None) if hasattr(obj, "latest_runs") else obj.reconciliation_runs.first()
+        return latest.result.get("amounts_known", False) if latest else False
 
     class Meta:
         model = ReconciliationCase
@@ -111,6 +128,9 @@ class ReconciliationCaseListSerializer(serializers.ModelSerializer):
             "expected_amount_minor",
             "actual_amount_minor",
             "difference_minor",
+            "amounts_known",
+            "workflow_status",
+            "assigned_to_id",
             "owner",
             "opened_at",
         )

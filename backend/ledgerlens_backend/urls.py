@@ -4,6 +4,9 @@ from rest_framework.routers import DefaultRouter
 
 from reconciliation.api_views import (
     AuditLogView,
+    IdentityView,
+    ConnectionStatusView,
+    RuleVersionView,
     FinancialRecordViewSet,
     IngestionBatchView,
     OverviewMetricsView,
@@ -19,6 +22,10 @@ router.register("records", FinancialRecordViewSet, basename="financial-record")
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/health/", SystemHealthView.as_view(), name="system-health"),
+    path("api/auth/", include("rest_framework.urls")),
+    path("api/identity/", IdentityView.as_view()),
+    path("api/connections/", ConnectionStatusView.as_view()),
+    path("api/rule-versions/", RuleVersionView.as_view()),
     path("api/metrics/overview/", OverviewMetricsView.as_view(), name="overview-metrics"),
     path("api/audit-log/", AuditLogView.as_view(), name="audit-log"),
     path("api/ingestion/batches/", IngestionBatchView.as_view(), name="ingestion-batches"),
